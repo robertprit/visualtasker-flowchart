@@ -4,6 +4,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
+command -v rg >/dev/null || { echo "ripgrep is required" >&2; exit 1; }
 test -f LICENSE
 rg -q 'Apache License' LICENSE
 rg -q 'Version 2.0, January 2004' LICENSE

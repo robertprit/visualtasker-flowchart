@@ -4,6 +4,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
+command -v rg >/dev/null || { echo "ripgrep is required" >&2; exit 1; }
 if rg -n $'\t| +$' --glob '*.kt' --glob '*.kts' --glob '*.md' --glob '*.sh' --glob '!**/build/**' .; then
   echo "Tabs or trailing whitespace found" >&2
   exit 1

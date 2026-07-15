@@ -4,6 +4,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
+command -v rg >/dev/null || { echo "ripgrep is required" >&2; exit 1; }
 pure_modules=(flowchart-domain flowchart-validation flowchart-layout flowchart-interaction flowchart-serialization flowchart-test-support)
 
 for module in "${pure_modules[@]}"; do
