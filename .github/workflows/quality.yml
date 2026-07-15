@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Quality and licenses
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install quality audit tools
+        run: sudo apt-get update && sudo apt-get install --yes ripgrep
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew formatCheck staticAnalysis licenseAudit
+      - name: Reject forbidden dependency licenses
+        run: bash scripts/check-licenses.sh
