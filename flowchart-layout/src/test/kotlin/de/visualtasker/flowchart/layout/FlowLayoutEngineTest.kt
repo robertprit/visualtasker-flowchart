@@ -32,6 +32,14 @@ public class FlowLayoutEngineTest {
         FlowLayoutOrientation.values().forEach { orientation -> assertTrue(FlowLayoutEngine.layout(graph, config = FlowLayoutConfig(orientation = orientation)).isValid) }
     }
 
+    @Test public fun `long route detours around intervening node rectangle`() {
+        val graph = graph(listOf("a", "b", "c"), listOf("a" to "b", "b" to "c", "a" to "c"))
+        val result = FlowLayoutEngine.layout(graph)
+        val longRoute = result.routes.getValue(FlowEdgeId("e2"))
+        val obstacle = result.nodeBounds.getValue(FlowNodeId("b"))
+        assertFalse(longRoute.segments.any { segment -> segment.start.x == segment.end.x && segment.start.x in obstacle.left..obstacle.right && minOf(segment.start.y, segment.end.y) <= obstacle.bottom && maxOf(segment.start.y, segment.end.y) >= obstacle.top })
+    }
+
     private fun graph(nodes: List<String>, edges: List<Pair<String, String>>): FlowGraphDocument {
         val graphNodes = nodes.map { FlowGraphNode(FlowNodeId(it), FlowSemanticKind(FlowNodeKind.ACTION), it) }
         val graphEdges = edges.mapIndexed { index, (source, target) -> FlowGraphEdge(FlowEdgeId("e$index"), FlowNodeId(source), FlowNodeId(target), FlowEdgeKind.SEQUENCE) }

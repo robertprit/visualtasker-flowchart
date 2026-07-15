@@ -15,6 +15,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
@@ -48,25 +49,39 @@ public fun FlowchartHost(
     Box(Modifier.fillMaxSize().background(uiConfig.colorTokens.background)) {
         FlowCanvas(graphDocument, view, controllerState.runtime, controllerState.interaction, controller, uiConfig, callbacks) { controllerState = controller.snapshot() }
         ZoomControls(controller, uiConfig) { controllerState = controller.snapshot() }
-        NodeSemantics(graphDocument, view, controllerState, callbacks)
+        FlowLabelsAndSemantics(graphDocument, view, controllerState, callbacks)
     }
 }
 
 @Composable
 private fun FlowCanvas(graph: FlowGraphDocument, view: FlowViewDocument, runtime: FlowRuntimeSnapshot?, interaction: FlowInteractionState, controller: FlowchartController, config: FlowchartUiConfig, callbacks: FlowchartHostCallbacks, refresh: () -> Unit) {
     var dragNode by remember { mutableStateOf<FlowNodeId?>(null) }
+    var panning by remember { mutableStateOf(false) }
     val modifier = Modifier.fillMaxSize().testTag("flowchart-canvas")
         .pointerInput(graph, view, config) { detectTapGestures(onDoubleTap = { offset -> hitNode(offset, view)?.let(callbacks.onNodeInvoked) }, onTap = { offset ->
             if (!config.selectionEnabled) return@detectTapGestures
             val node = hitNode(offset, view)
-            if (node != null) { controller.dispatch(FlowInteractionAction.SelectNode(node)); callbacks.onNodeSelected(node) } else { controller.dispatch(FlowInteractionAction.ClearSelection); callbacks.onNodeSelected(null) }
+            val edge = if (node == null && config.edgeSelectionEnabled) hitEdge(offset, graph, view) else null
+            when {
+                node != null -> { controller.dispatch(FlowInteractionAction.SelectNode(node)); callbacks.onNodeSelected(node); callbacks.onEdgeSelected(null) }
+                edge != null -> { controller.dispatch(FlowInteractionAction.SelectEdge(edge)); callbacks.onNodeSelected(null); callbacks.onEdgeSelected(edge) }
+                else -> { controller.dispatch(FlowInteractionAction.ClearSelection); callbacks.onNodeSelected(null); callbacks.onEdgeSelected(null) }
+            }
             refresh()
         }) }
-        .pointerInput(graph, view, config.nodeDraggingEnabled) { if (config.nodeDraggingEnabled) detectDragGestures(
-            onDragStart = { offset -> dragNode = hitNode(offset, view); dragNode?.let { controller.dispatch(FlowInteractionAction.BeginNodeDrag(it, FlowPoint(offset.x.toDouble(), offset.y.toDouble()))) } },
-            onDrag = { change, _ -> dragNode?.let { controller.dispatch(FlowInteractionAction.UpdateNodeDrag(FlowPoint(change.position.x.toDouble(), change.position.y.toDouble()))); refresh() } },
-            onDragEnd = { dragNode?.let { controller.dispatch(FlowInteractionAction.CommitNodeDrag); refresh() }; dragNode = null },
-            onDragCancel = { controller.dispatch(FlowInteractionAction.CancelNodeDrag); dragNode = null; refresh() },
+        .pointerInput(graph, view, config.nodeDraggingEnabled, config.panEnabled) { detectDragGestures(
+            onDragStart = { offset ->
+                dragNode = if (config.nodeDraggingEnabled) hitNode(offset, view) else null
+                if (dragNode != null) controller.dispatch(FlowInteractionAction.BeginNodeDrag(dragNode!!, FlowPoint(offset.x.toDouble(), offset.y.toDouble())))
+                else if (config.panEnabled) { panning = true; controller.dispatch(FlowInteractionAction.BeginViewportPan(FlowPoint(offset.x.toDouble(), offset.y.toDouble()))) }
+            },
+            onDrag = { change, _ ->
+                val point = FlowPoint(change.position.x.toDouble(), change.position.y.toDouble())
+                if (dragNode != null) controller.dispatch(FlowInteractionAction.UpdateNodeDrag(point)) else if (panning) controller.dispatch(FlowInteractionAction.UpdateViewportPan(point))
+                refresh()
+            },
+            onDragEnd = { if (dragNode != null) controller.dispatch(FlowInteractionAction.CommitNodeDrag) else if (panning) controller.dispatch(FlowInteractionAction.CommitViewportPan); dragNode = null; panning = false; refresh() },
+            onDragCancel = { if (dragNode != null) controller.dispatch(FlowInteractionAction.CancelNodeDrag); dragNode = null; panning = false; refresh() },
         ) }
     Canvas(modifier) {
         val viewport = view.viewport
@@ -102,20 +117,47 @@ private fun FlowCanvas(graph: FlowGraphDocument, view: FlowViewDocument, runtime
     }
 }
 
-@Composable private fun NodeSemantics(graph: FlowGraphDocument, view: FlowViewDocument, state: FlowchartControllerState, callbacks: FlowchartHostCallbacks) {
-    Box(Modifier.fillMaxSize()) { graph.nodes.forEach { node ->
+@Composable private fun FlowLabelsAndSemantics(graph: FlowGraphDocument, view: FlowViewDocument, state: FlowchartControllerState, callbacks: FlowchartHostCallbacks) {
+    val density = LocalDensity.current
+    fun xDp(value: Double) = with(density) { value.toFloat().toDp() }
+    Box(Modifier.fillMaxSize()) {
+        graph.edges.forEach { edge ->
+            val label = edge.label ?: when (edge.kind) { FlowEdgeKind.TRUE_BRANCH -> "TRUE"; FlowEdgeKind.FALSE_BRANCH -> "FALSE"; FlowEdgeKind.ELSE_IF_BRANCH -> "ELSE IF"; FlowEdgeKind.LOOP_BACK -> "LOOP"; else -> null } ?: return@forEach
+            val points = edgeScreenPoints(edge, graph, view)
+            val center = points.getOrNull(points.size / 2) ?: return@forEach
+            Text(label, Modifier.offset(xDp(center.x), xDp(center.y)).semantics { contentDescription = "Edge $label"; selected = edge.id in state.interaction.selectedEdgeIds; onClick("Select edge") { callbacks.onEdgeSelected(edge.id); true } }, style = MaterialTheme.typography.labelSmall)
+        }
+        graph.nodes.forEach { node ->
         val nodeView = view.nodeViews.firstOrNull { it.nodeId == node.id } ?: return@forEach
         val runtime = state.runtime?.nodeStates?.get(node.id)
-        Box(Modifier.offset(nodeView.position.x.dp, nodeView.position.y.dp).size((nodeView.size?.width ?: 160.0).dp, (nodeView.size?.height ?: 72.0).dp).semantics {
+        val screen = FlowViewportTransform.graphToScreen(nodeView.position, view.viewport)
+        val width = (nodeView.size?.width ?: 160.0) * view.viewport.zoom
+        val height = (nodeView.size?.height ?: 72.0) * view.viewport.zoom
+        Box(Modifier.offset(xDp(screen.x), xDp(screen.y)).size(xDp(width), xDp(height)).padding(8.dp).semantics {
             contentDescription = buildString { append(node.label); append(", "); append(node.kind.displayName ?: node.kind.standard?.name ?: "extension node"); if (runtime != null) { append(", "); append(runtime.name) }; if (node.diagnosticIds.isNotEmpty()) append(", has diagnostics") }
             selected = node.id in state.interaction.selectedNodeIds
             onClick("Select node") { callbacks.onNodeSelected(node.id); true }
             onLongClick("Invoke node") { callbacks.onNodeInvoked(node.id); true }
-        })
+        }) { Column { Text(node.label, style = MaterialTheme.typography.bodyMedium); Text(node.kind.displayName ?: node.kind.standard?.name ?: "Extension", style = MaterialTheme.typography.labelSmall); runtime?.let { Text(it.name, style = MaterialTheme.typography.labelSmall) } } }
     } }
 }
 
 private fun hitNode(offset: Offset, view: FlowViewDocument): FlowNodeId? {
     val graphPoint = FlowViewportTransform.screenToGraph(FlowPoint(offset.x.toDouble(), offset.y.toDouble()), view.viewport)
     return view.nodeViews.asReversed().firstOrNull { FlowRect(it.position, it.size ?: FlowSize(160.0, 72.0)).contains(graphPoint) }?.nodeId
+}
+
+private fun hitEdge(offset: Offset, graph: FlowGraphDocument, view: FlowViewDocument): FlowEdgeId? {
+    val point = FlowPoint(offset.x.toDouble(), offset.y.toDouble())
+    val segments = graph.edges.associate { edge -> edge.id to edgeScreenPoints(edge, graph, view).zipWithNext() }
+    return FlowHitTesting.hitEdge(point, segments, tolerance = 12.0)
+}
+
+private fun edgeScreenPoints(edge: FlowGraphEdge, graph: FlowGraphDocument, view: FlowViewDocument): List<FlowPoint> {
+    val source = view.nodeViews.firstOrNull { it.nodeId == edge.sourceNodeId } ?: return emptyList()
+    val target = view.nodeViews.firstOrNull { it.nodeId == edge.targetNodeId } ?: return emptyList()
+    val sourceSize = source.size ?: FlowSize(160.0, 72.0)
+    val targetSize = target.size ?: FlowSize(160.0, 72.0)
+    val points = listOf(FlowPoint(source.position.x + sourceSize.width / 2, source.position.y + sourceSize.height)) + view.edgeViews.firstOrNull { it.edgeId == edge.id }?.bendPoints.orEmpty() + FlowPoint(target.position.x + targetSize.width / 2, target.position.y)
+    return points.map { FlowViewportTransform.graphToScreen(it, view.viewport) }
 }

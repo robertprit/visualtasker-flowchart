@@ -50,7 +50,8 @@ public object FlowLayoutEngine {
         }
         val diagnostics = mutableListOf<FlowLayoutDiagnostic>()
         val routes = edges.associate { edge ->
-            val route = route(edge, allBounds.getValue(edge.sourceNodeId), allBounds.getValue(edge.targetNodeId), allRanks, backEdges, config, compatibleView)
+            val obstacles = allBounds.filterKeys { it != edge.sourceNodeId && it != edge.targetNodeId }.values
+            val route = route(edge, allBounds.getValue(edge.sourceNodeId), allBounds.getValue(edge.targetNodeId), obstacles, allRanks, backEdges, config, compatibleView)
             edge.id to route
         }
         if (allBounds.values.any { !finite(it) } || routes.values.flatMap { it.points }.any { !it.x.isFinite() || !it.y.isFinite() }) diagnostics += FlowLayoutDiagnostic(FlowLayoutDiagnosticCode.NON_FINITE_OUTPUT, "Layout contains non-finite geometry")
@@ -102,7 +103,7 @@ public object FlowLayoutEngine {
         return ordered
     }
 
-    private fun route(edge: FlowGraphEdge, source: FlowRect, target: FlowRect, ranks: Map<FlowNodeId, Int>, backEdges: Set<FlowEdgeId>, config: FlowLayoutConfig, view: FlowViewDocument?): FlowRoute {
+    private fun route(edge: FlowGraphEdge, source: FlowRect, target: FlowRect, obstacles: Collection<FlowRect>, ranks: Map<FlowNodeId, Int>, backEdges: Set<FlowEdgeId>, config: FlowLayoutConfig, view: FlowViewDocument?): FlowRoute {
         val locked = view?.edgeViews?.firstOrNull { it.edgeId == edge.id && it.routeLockState == FlowRouteLockState.LOCKED }
         if (locked != null && locked.bendPoints.isNotEmpty()) return makeRoute(edge.id, FlowRouteKind.ORTHOGONAL, listOf(portOut(source, config.orientation)) + locked.bendPoints.map { FlowRoutePoint(it.x, it.y) } + portIn(target, config.orientation), true)
         val start = portOut(source, config.orientation); val end = portIn(target, config.orientation)
@@ -115,10 +116,14 @@ public object FlowLayoutEngine {
             return makeRoute(edge.id, FlowRouteKind.LOOP_BACK, points, true)
         }
         val rankDistance = kotlin.math.abs(ranks.getValue(edge.targetNodeId) - ranks.getValue(edge.sourceNodeId))
-        val points = when (config.orientation) {
+        val directPoints = when (config.orientation) {
             FlowLayoutOrientation.TOP_TO_BOTTOM -> { val mid = (start.y + end.y) / 2; listOf(start, FlowRoutePoint(start.x, mid), FlowRoutePoint(end.x, mid), end) }
             FlowLayoutOrientation.LEFT_TO_RIGHT -> { val mid = (start.x + end.x) / 2; listOf(start, FlowRoutePoint(mid, start.y), FlowRoutePoint(mid, end.y), end) }
         }
+        val points = if (collides(directPoints, obstacles, config.routingClearance)) when (config.orientation) {
+            FlowLayoutOrientation.TOP_TO_BOTTOM -> { val lane = obstacles.maxOfOrNull { it.right }?.plus(config.routingClearance) ?: max(source.right, target.right) + config.routingClearance; listOf(start, FlowRoutePoint(lane, start.y), FlowRoutePoint(lane, end.y), end) }
+            FlowLayoutOrientation.LEFT_TO_RIGHT -> { val lane = obstacles.maxOfOrNull { it.bottom }?.plus(config.routingClearance) ?: max(source.bottom, target.bottom) + config.routingClearance; listOf(start, FlowRoutePoint(start.x, lane), FlowRoutePoint(end.x, lane), end) }
+        } else directPoints
         val kind = if (edge.kind in setOf(FlowEdgeKind.TRUE_BRANCH, FlowEdgeKind.FALSE_BRANCH, FlowEdgeKind.ELSE_IF_BRANCH)) FlowRouteKind.BRANCH else FlowRouteKind.ORTHOGONAL
         return makeRoute(edge.id, kind, points.distinct(), rankDistance > 1)
     }
@@ -126,6 +131,13 @@ public object FlowLayoutEngine {
     private fun portOut(rect: FlowRect, orientation: FlowLayoutOrientation): FlowRoutePoint = if (orientation == FlowLayoutOrientation.TOP_TO_BOTTOM) FlowRoutePoint((rect.left + rect.right) / 2, rect.bottom) else FlowRoutePoint(rect.right, (rect.top + rect.bottom) / 2)
     private fun portIn(rect: FlowRect, orientation: FlowLayoutOrientation): FlowRoutePoint = if (orientation == FlowLayoutOrientation.TOP_TO_BOTTOM) FlowRoutePoint((rect.left + rect.right) / 2, rect.top) else FlowRoutePoint(rect.left, (rect.top + rect.bottom) / 2)
     private fun makeRoute(id: FlowEdgeId, kind: FlowRouteKind, points: List<FlowRoutePoint>, dummy: Boolean): FlowRoute = FlowRoute(id, kind, points, points.zipWithNext(::FlowRouteSegment), dummy)
+    private fun collides(points: List<FlowRoutePoint>, obstacles: Collection<FlowRect>, clearance: Double): Boolean = points.zipWithNext().any { (start, end) -> obstacles.any { rect ->
+        val left = rect.left - clearance; val right = rect.right + clearance; val top = rect.top - clearance; val bottom = rect.bottom + clearance
+        if (start.x == end.x) start.x in left..right && rangesOverlap(start.y, end.y, top, bottom)
+        else if (start.y == end.y) start.y in top..bottom && rangesOverlap(start.x, end.x, left, right)
+        else true
+    } }
+    private fun rangesOverlap(a: Double, b: Double, low: Double, high: Double): Boolean = minOf(a, b) <= high && maxOf(a, b) >= low
     private fun finite(rect: FlowRect): Boolean = listOf(rect.left, rect.top, rect.right, rect.bottom).all(Double::isFinite) && rect.size.width > 0 && rect.size.height > 0
     private fun seededKey(value: String, seed: Long): String = "${value.hashCode().toLong() xor seed}:$value"
 }

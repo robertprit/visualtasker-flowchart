@@ -35,4 +35,10 @@ public class CanonicalCodecsTest {
         val runtime = FlowRuntimeSnapshot(runId = FlowRunId("run"), sourceSessionId = FlowSourceSessionId("session"), documentId = graph.documentId, documentRevision = graph.documentRevision, sequence = 1, capturedAtEpochMs = 1)
         assertEquals(FlowRuntimeJsonCodec(graph).encodeCanonical(runtime), FlowRuntimeJsonCodec(graph).encodeCanonical(runtime))
     }
+
+    @Test public fun `canonical graph matches checked in golden fixture`() {
+        val goldenGraph = FlowGraphDocument(documentId = FlowDocumentId("golden"), documentRevision = FlowDocumentRevision("1"), producerId = "golden", producerVersion = "1", sourceRevision = "1", sourceHash = "hash")
+        val expected = checkNotNull(javaClass.getResource("/golden/graph-empty-v1.json")).readText().trim()
+        assertEquals(expected, FlowGraphJsonCodec().encodeCanonical(goldenGraph))
+    }
 }
