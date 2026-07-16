@@ -3,6 +3,7 @@ package de.visualtasker.flowchart.demo
 
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -36,6 +37,18 @@ public class DemoDeviceSmokeTest {
 
         selectFixture("Unknown extension")
         compose.onNodeWithContentDescription("Vendor, capability").assertExists()
+    }
+
+    @Test public fun renderedNodeMovesWhenDragged() {
+        selectFixture("Simple loop")
+        val node = compose.onNodeWithContentDescription("Body, ACTION")
+        val before = node.fetchSemanticsNode().boundsInRoot
+
+        node.performTouchInput { swipeRight(startX = centerX, endX = centerX + 120f, durationMillis = 500) }
+        compose.waitForIdle()
+
+        val after = node.fetchSemanticsNode().boundsInRoot
+        assertTrue("Expected node to move right: before=$before after=$after", after.left > before.left + 40f)
     }
 
     private fun selectFixture(name: String) {
