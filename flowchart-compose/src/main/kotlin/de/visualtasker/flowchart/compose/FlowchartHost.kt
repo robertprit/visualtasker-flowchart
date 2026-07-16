@@ -3,8 +3,10 @@ package de.visualtasker.flowchart.compose
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -15,6 +17,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
@@ -47,43 +50,16 @@ public fun FlowchartHost(
         return
     }
     Box(Modifier.fillMaxSize().background(uiConfig.colorTokens.background)) {
-        FlowCanvas(graphDocument, view, controllerState.runtime, controllerState.interaction, controller, uiConfig, callbacks) { controllerState = controller.snapshot() }
-        ZoomControls(controller, uiConfig) { controllerState = controller.snapshot() }
+        FlowCanvas(graphDocument, view, controllerState.runtime, controllerState.interaction, uiConfig)
         FlowLabelsAndSemantics(graphDocument, view, controllerState, callbacks)
+        FlowGestureLayer(graphDocument, view, controller, uiConfig, callbacks) { controllerState = controller.snapshot() }
+        ZoomControls(controller, uiConfig) { controllerState = controller.snapshot() }
     }
 }
 
 @Composable
-private fun FlowCanvas(graph: FlowGraphDocument, view: FlowViewDocument, runtime: FlowRuntimeSnapshot?, interaction: FlowInteractionState, controller: FlowchartController, config: FlowchartUiConfig, callbacks: FlowchartHostCallbacks, refresh: () -> Unit) {
-    var dragNode by remember { mutableStateOf<FlowNodeId?>(null) }
-    var panning by remember { mutableStateOf(false) }
-    val modifier = Modifier.fillMaxSize().testTag("flowchart-canvas")
-        .pointerInput(graph, view, config) { detectTapGestures(onDoubleTap = { offset -> hitNode(offset, view)?.let(callbacks.onNodeInvoked) }, onTap = { offset ->
-            if (!config.selectionEnabled) return@detectTapGestures
-            val node = hitNode(offset, view)
-            val edge = if (node == null && config.edgeSelectionEnabled) hitEdge(offset, graph, view) else null
-            when {
-                node != null -> { controller.dispatch(FlowInteractionAction.SelectNode(node)); callbacks.onNodeSelected(node); callbacks.onEdgeSelected(null) }
-                edge != null -> { controller.dispatch(FlowInteractionAction.SelectEdge(edge)); callbacks.onNodeSelected(null); callbacks.onEdgeSelected(edge) }
-                else -> { controller.dispatch(FlowInteractionAction.ClearSelection); callbacks.onNodeSelected(null); callbacks.onEdgeSelected(null) }
-            }
-            refresh()
-        }) }
-        .pointerInput(graph, view, config.nodeDraggingEnabled, config.panEnabled) { detectDragGestures(
-            onDragStart = { offset ->
-                dragNode = if (config.nodeDraggingEnabled) hitNode(offset, view) else null
-                if (dragNode != null) controller.dispatch(FlowInteractionAction.BeginNodeDrag(dragNode!!, FlowPoint(offset.x.toDouble(), offset.y.toDouble())))
-                else if (config.panEnabled) { panning = true; controller.dispatch(FlowInteractionAction.BeginViewportPan(FlowPoint(offset.x.toDouble(), offset.y.toDouble()))) }
-            },
-            onDrag = { change, _ ->
-                val point = FlowPoint(change.position.x.toDouble(), change.position.y.toDouble())
-                if (dragNode != null) controller.dispatch(FlowInteractionAction.UpdateNodeDrag(point)) else if (panning) controller.dispatch(FlowInteractionAction.UpdateViewportPan(point))
-                refresh()
-            },
-            onDragEnd = { if (dragNode != null) controller.dispatch(FlowInteractionAction.CommitNodeDrag) else if (panning) controller.dispatch(FlowInteractionAction.CommitViewportPan); dragNode = null; panning = false; refresh() },
-            onDragCancel = { if (dragNode != null) controller.dispatch(FlowInteractionAction.CancelNodeDrag); dragNode = null; panning = false; refresh() },
-        ) }
-    Canvas(modifier) {
+private fun FlowCanvas(graph: FlowGraphDocument, view: FlowViewDocument, runtime: FlowRuntimeSnapshot?, interaction: FlowInteractionState, config: FlowchartUiConfig) {
+    Canvas(Modifier.fillMaxSize().testTag("flowchart-canvas")) {
         val viewport = view.viewport
         fun screen(point: FlowPoint) = Offset((point.x * viewport.zoom + viewport.pan.x).toFloat(), (point.y * viewport.zoom + viewport.pan.y).toFloat())
         graph.edges.sortedBy { it.id.value }.forEach { edge ->
@@ -105,6 +81,67 @@ private fun FlowCanvas(graph: FlowGraphDocument, view: FlowViewDocument, runtime
             if (config.diagnosticMarkersEnabled && node.diagnosticIds.isNotEmpty()) drawCircle(config.colorTokens.diagnostic, 6.dp.toPx(), Offset(origin.x + canvasSize.width - 10.dp.toPx(), origin.y + 10.dp.toPx()))
         }
     }
+}
+
+@Composable
+private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, controller: FlowchartController, config: FlowchartUiConfig, callbacks: FlowchartHostCallbacks, refresh: () -> Unit) {
+    var dragNode by remember { mutableStateOf<FlowNodeId?>(null) }
+    var panning by remember { mutableStateOf(false) }
+    val currentView by rememberUpdatedState(view)
+    var previousTapAt by remember { mutableLongStateOf(0L) }
+    var previousTapPosition by remember { mutableStateOf<Offset?>(null) }
+    val modifier = Modifier.fillMaxSize().testTag("flowchart-gestures")
+        .pointerInput(graph, config) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                val dragStart = awaitTouchSlopOrCancellation(down.id) { change, _ -> change.consume() }
+                if (dragStart != null) {
+                    dragNode = if (config.nodeDraggingEnabled) hitNode(down.position, currentView) else null
+                    if (dragNode != null) {
+                        controller.dispatch(FlowInteractionAction.BeginNodeDrag(dragNode!!, FlowPoint(down.position.x.toDouble(), down.position.y.toDouble())))
+                    } else if (config.panEnabled) {
+                        panning = true
+                        controller.dispatch(FlowInteractionAction.BeginViewportPan(FlowPoint(down.position.x.toDouble(), down.position.y.toDouble())))
+                    }
+                    val completed = drag(dragStart.id) { change ->
+                        if (change.positionChange() != Offset.Zero) change.consume()
+                        val point = FlowPoint(change.position.x.toDouble(), change.position.y.toDouble())
+                        if (dragNode != null) controller.dispatch(FlowInteractionAction.UpdateNodeDrag(point))
+                        else if (panning) controller.dispatch(FlowInteractionAction.UpdateViewportPan(point))
+                        refresh()
+                    }
+                    if (completed) {
+                        if (dragNode != null) controller.dispatch(FlowInteractionAction.CommitNodeDrag)
+                        else if (panning) controller.dispatch(FlowInteractionAction.CommitViewportPan)
+                    } else if (dragNode != null) {
+                        controller.dispatch(FlowInteractionAction.CancelNodeDrag)
+                    }
+                    dragNode = null
+                    panning = false
+                    refresh()
+                } else if (config.selectionEnabled) {
+                    val offset = down.position
+                    val prior = previousTapPosition
+                    val isDoubleTap = down.uptimeMillis - previousTapAt <= viewConfiguration.doubleTapTimeoutMillis &&
+                        prior != null && (offset - prior).getDistance() <= viewConfiguration.touchSlop
+                    previousTapAt = down.uptimeMillis
+                    previousTapPosition = offset
+                    val node = hitNode(offset, currentView)
+                    if (isDoubleTap) {
+                        node?.let(callbacks.onNodeInvoked)
+                    } else {
+                        val edge = if (node == null && config.edgeSelectionEnabled) hitEdge(offset, graph, currentView) else null
+                        when {
+                            node != null -> { controller.dispatch(FlowInteractionAction.SelectNode(node)); callbacks.onNodeSelected(node); callbacks.onEdgeSelected(null) }
+                            edge != null -> { controller.dispatch(FlowInteractionAction.SelectEdge(edge)); callbacks.onNodeSelected(null); callbacks.onEdgeSelected(edge) }
+                            else -> { controller.dispatch(FlowInteractionAction.ClearSelection); callbacks.onNodeSelected(null); callbacks.onEdgeSelected(null) }
+                        }
+                    }
+                    refresh()
+                }
+            }
+        }
+    Box(modifier)
 }
 
 @Composable private fun ZoomControls(controller: FlowchartController, config: FlowchartUiConfig, refresh: () -> Unit) {

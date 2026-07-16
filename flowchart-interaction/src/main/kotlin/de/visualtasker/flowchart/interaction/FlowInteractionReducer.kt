@@ -32,7 +32,9 @@ public object FlowInteractionReducer {
 
     private fun updateDrag(state: FlowInteractionState, action: FlowInteractionAction.UpdateNodeDrag, view: FlowViewDocument): FlowInteractionResult {
         val drag = state.dragState ?: return result(state, view)
-        val dx = action.at.x - drag.anchor.x; val dy = action.at.y - drag.anchor.y
+        val anchor = FlowViewportTransform.screenToGraph(drag.anchor, view.viewport)
+        val latest = FlowViewportTransform.screenToGraph(action.at, view.viewport)
+        val dx = latest.x - anchor.x; val dy = latest.y - anchor.y
         val changed = view.copy(nodeViews = view.nodeViews.map { node -> drag.originalPositions[node.nodeId]?.let { node.copy(position = FlowPoint(it.x + dx, it.y + dy)) } ?: node })
         return FlowInteractionResult(state.copy(dragState = drag.copy(latest = action.at)), changed, false)
     }
