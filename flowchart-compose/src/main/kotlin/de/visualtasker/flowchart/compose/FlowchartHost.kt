@@ -14,8 +14,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
@@ -33,6 +36,7 @@ public fun FlowchartHost(
     controller: FlowchartController,
     uiConfig: FlowchartUiConfig = FlowchartUiConfig(),
     callbacks: FlowchartHostCallbacks = FlowchartHostCallbacks(),
+    nodeShapeProvider: FlowchartNodeShapeProvider? = null,
 ) {
     var controllerState by remember(controller) { mutableStateOf(controller.snapshot()) }
     DisposableEffect(controller, callbacks) {
@@ -50,7 +54,7 @@ public fun FlowchartHost(
         return
     }
     Box(Modifier.fillMaxSize().background(uiConfig.colorTokens.background)) {
-        FlowCanvas(graphDocument, view, controllerState.runtime, controllerState.interaction, uiConfig)
+        FlowCanvas(graphDocument, view, controllerState.runtime, controllerState.interaction, uiConfig, nodeShapeProvider)
         FlowLabelsAndSemantics(graphDocument, view, controllerState, callbacks)
         FlowGestureLayer(graphDocument, view, controller, uiConfig, callbacks) { controllerState = controller.snapshot() }
         ZoomControls(controller, uiConfig) { controllerState = controller.snapshot() }
@@ -58,7 +62,14 @@ public fun FlowchartHost(
 }
 
 @Composable
-private fun FlowCanvas(graph: FlowGraphDocument, view: FlowViewDocument, runtime: FlowRuntimeSnapshot?, interaction: FlowInteractionState, config: FlowchartUiConfig) {
+private fun FlowCanvas(
+    graph: FlowGraphDocument,
+    view: FlowViewDocument,
+    runtime: FlowRuntimeSnapshot?,
+    interaction: FlowInteractionState,
+    config: FlowchartUiConfig,
+    nodeShapeProvider: FlowchartNodeShapeProvider?,
+) {
     Canvas(Modifier.fillMaxSize().testTag("flowchart-canvas")) {
         val viewport = view.viewport
         fun screen(point: FlowPoint) = Offset((point.x * viewport.zoom + viewport.pan.x).toFloat(), (point.y * viewport.zoom + viewport.pan.y).toFloat())
@@ -69,18 +80,152 @@ private fun FlowCanvas(graph: FlowGraphDocument, view: FlowViewDocument, runtime
             val start = FlowPoint(source.position.x + sourceSize.width / 2, source.position.y + sourceSize.height)
             val end = FlowPoint(target.position.x + targetSize.width / 2, target.position.y)
             val bends = view.edgeViews.firstOrNull { it.edgeId == edge.id }?.bendPoints.orEmpty()
-            (listOf(start) + bends + end).map(::screen).zipWithNext().forEach { (a, b) -> drawLine(config.colorTokens.edge, a, b, 2.dp.toPx()) }
+            val points = (listOf(start) + bends + end).map(::screen)
+            val edgeColor = when (flowEdgeVisualCategory(edge.kind)) {
+                FlowchartEdgeVisualCategory.DEFAULT -> config.colorTokens.edge
+                FlowchartEdgeVisualCategory.BRANCH -> config.colorTokens.branchEdge
+                FlowchartEdgeVisualCategory.LOOP -> config.colorTokens.loopEdge
+                FlowchartEdgeVisualCategory.ERROR -> config.colorTokens.errorEdge
+            }
+            points.zipWithNext().forEach { (a, b) ->
+                drawLine(
+                    color = edgeColor,
+                    start = a,
+                    end = b,
+                    strokeWidth = config.shapeTokens.edgeStrokeWidthDp.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+            }
+            val edgePresentation = flowEdgePresentation(
+                points = points,
+                arrowLength = config.shapeTokens.arrowLengthDp.dp.toPx().toDouble(),
+                arrowWidth = config.shapeTokens.arrowWidthDp.dp.toPx().toDouble(),
+            )
+            edgePresentation.connector?.let { startPoint ->
+                drawCircle(edgeColor, config.shapeTokens.connectorRadiusDp.dp.toPx(), startPoint)
+            }
+            val arrow = edgePresentation.arrowHead
+            if (arrow.size == 3) {
+                drawPath(
+                    path = Path().apply {
+                        moveTo(arrow[0].x.toFloat(), arrow[0].y.toFloat())
+                        lineTo(arrow[1].x.toFloat(), arrow[1].y.toFloat())
+                        lineTo(arrow[2].x.toFloat(), arrow[2].y.toFloat())
+                        close()
+                    },
+                    color = edgeColor,
+                )
+            }
         }
         graph.nodes.sortedBy { it.id.value }.forEach { node ->
             val nodeView = view.nodeViews.firstOrNull { it.nodeId == node.id } ?: return@forEach
             val size = nodeView.size ?: FlowSize(160.0, 72.0); val origin = screen(nodeView.position); val canvasSize = Size((size.width * viewport.zoom).toFloat(), (size.height * viewport.zoom).toFloat())
             val runtimeState = runtime?.nodeStates?.get(node.id)
             val stroke = when { node.id in interaction.selectedNodeIds -> config.colorTokens.selectedStroke; runtimeState == FlowRuntimeNodeState.FAILED -> config.colorTokens.failedStroke; runtimeState in setOf(FlowRuntimeNodeState.RUNNING, FlowRuntimeNodeState.WAITING) -> config.colorTokens.runningStroke; else -> config.colorTokens.nodeStroke }
-            drawRoundRect(config.colorTokens.nodeFill, origin, canvasSize, CornerRadius(config.shapeTokens.nodeCornerRadiusDp.dp.toPx()))
-            drawRoundRect(stroke, origin, canvasSize, CornerRadius(config.shapeTokens.nodeCornerRadiusDp.dp.toPx()), style = Stroke(config.shapeTokens.nodeStrokeWidthDp.dp.toPx(), pathEffect = if (node.kind.standard == FlowNodeKind.UNKNOWN_SOURCE || node.kind.extensionId != null) PathEffect.dashPathEffect(floatArrayOf(10f, 6f)) else null))
+            val visualPath = resolveNodeShape(nodeShapeProvider, node, canvasSize.width, canvasSize.height)
+            if (visualPath != null) {
+                translate(origin.x, origin.y) {
+                    drawPath(visualPath, config.colorTokens.nodeFill)
+                    drawPath(
+                        path = visualPath,
+                        color = stroke,
+                        style = Stroke(
+                            width = config.shapeTokens.nodeStrokeWidthDp.dp.toPx(),
+                            pathEffect = if (node.kind.standard == FlowNodeKind.UNKNOWN_SOURCE || node.kind.extensionId != null) {
+                                PathEffect.dashPathEffect(floatArrayOf(10f, 6f))
+                            } else {
+                                null
+                            },
+                        ),
+                    )
+                }
+            } else {
+                drawRoundRect(config.colorTokens.nodeFill, origin, canvasSize, CornerRadius(config.shapeTokens.nodeCornerRadiusDp.dp.toPx()))
+                drawRoundRect(stroke, origin, canvasSize, CornerRadius(config.shapeTokens.nodeCornerRadiusDp.dp.toPx()), style = Stroke(config.shapeTokens.nodeStrokeWidthDp.dp.toPx(), pathEffect = if (node.kind.standard == FlowNodeKind.UNKNOWN_SOURCE || node.kind.extensionId != null) PathEffect.dashPathEffect(floatArrayOf(10f, 6f)) else null))
+            }
             if (config.diagnosticMarkersEnabled && node.diagnosticIds.isNotEmpty()) drawCircle(config.colorTokens.diagnostic, 6.dp.toPx(), Offset(origin.x + canvasSize.width - 10.dp.toPx(), origin.y + 10.dp.toPx()))
         }
     }
+}
+
+internal fun resolveNodeShape(
+    provider: FlowchartNodeShapeProvider?,
+    node: FlowGraphNode,
+    width: Float,
+    height: Float,
+): Path? = provider?.pathFor(node, width, height)
+
+internal enum class FlowchartEdgeVisualCategory {
+    DEFAULT,
+    BRANCH,
+    LOOP,
+    ERROR,
+}
+
+internal fun flowEdgeVisualCategory(kind: FlowEdgeKind): FlowchartEdgeVisualCategory = when (kind) {
+    FlowEdgeKind.TRUE_BRANCH,
+    FlowEdgeKind.FALSE_BRANCH,
+    FlowEdgeKind.ELSE_IF_BRANCH -> FlowchartEdgeVisualCategory.BRANCH
+
+    FlowEdgeKind.LOOP_BODY,
+    FlowEdgeKind.LOOP_BACK,
+    FlowEdgeKind.LOOP_EXIT -> FlowchartEdgeVisualCategory.LOOP
+
+    FlowEdgeKind.ERROR,
+    FlowEdgeKind.CATCH_BODY -> FlowchartEdgeVisualCategory.ERROR
+
+    FlowEdgeKind.SEQUENCE,
+    FlowEdgeKind.TRY_BODY,
+    FlowEdgeKind.FUNCTION_CALL,
+    FlowEdgeKind.FUNCTION_RETURN,
+    FlowEdgeKind.EVENT,
+    FlowEdgeKind.GOTO -> FlowchartEdgeVisualCategory.DEFAULT
+}
+
+internal data class FlowchartEdgePresentation(
+    val connector: Offset?,
+    val arrowHead: List<FlowPoint>,
+)
+
+internal fun flowEdgePresentation(
+    points: List<Offset>,
+    arrowLength: Double,
+    arrowWidth: Double,
+): FlowchartEdgePresentation = FlowchartEdgePresentation(
+    connector = points.firstOrNull(),
+    arrowHead = flowArrowHead(points, arrowLength, arrowWidth),
+)
+
+internal fun flowArrowHead(
+    points: List<Offset>,
+    length: Double,
+    width: Double,
+): List<FlowPoint> {
+    if (points.size < 2 || !length.isFinite() || !width.isFinite() || length <= 0.0 || width <= 0.0) {
+        return emptyList()
+    }
+    val tip = points.last()
+    var previousIndex = points.lastIndex - 1
+    while (previousIndex >= 0 && points[previousIndex] == tip) previousIndex--
+    if (previousIndex < 0) return emptyList()
+    val previous = points[previousIndex]
+    val dx = (tip.x - previous.x).toDouble()
+    val dy = (tip.y - previous.y).toDouble()
+    val magnitude = kotlin.math.hypot(dx, dy)
+    if (!magnitude.isFinite() || magnitude <= 0.0) return emptyList()
+    val unitX = dx / magnitude
+    val unitY = dy / magnitude
+    val effectiveLength = minOf(length, magnitude)
+    val baseX = tip.x - unitX * effectiveLength
+    val baseY = tip.y - unitY * effectiveLength
+    val halfWidth = minOf(width / 2.0, effectiveLength / 2.0)
+    val perpendicularX = -unitY * halfWidth
+    val perpendicularY = unitX * halfWidth
+    return listOf(
+        FlowPoint(tip.x.toDouble(), tip.y.toDouble()),
+        FlowPoint(baseX + perpendicularX, baseY + perpendicularY),
+        FlowPoint(baseX - perpendicularX, baseY - perpendicularY),
+    )
 }
 
 @Composable

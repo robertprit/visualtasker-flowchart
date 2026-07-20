@@ -3,6 +3,7 @@ package de.visualtasker.flowchart.compose
 
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import de.visualtasker.flowchart.domain.*
 import de.visualtasker.flowchart.interaction.*
 import de.visualtasker.flowchart.layout.FlowLayoutOrientation
@@ -18,13 +19,38 @@ public data class FlowchartColorTokens(
     public val runningStroke: Color = Color(0xFF006C45),
     public val failedStroke: Color = Color(0xFFBA1A1A),
     public val edge: Color = Color(0xFF596173),
+    public val branchEdge: Color = Color(0xFF6750A4),
+    public val loopEdge: Color = Color(0xFF006C45),
+    public val errorEdge: Color = Color(0xFFBA1A1A),
     public val diagnostic: Color = Color(0xFFBA1A1A),
 )
 
-@Immutable public data class FlowchartShapeTokens(public val nodeCornerRadiusDp: Float = 12f, public val nodeStrokeWidthDp: Float = 2f)
+@Immutable
+public data class FlowchartShapeTokens(
+    public val nodeCornerRadiusDp: Float = 12f,
+    public val nodeStrokeWidthDp: Float = 2f,
+    public val edgeStrokeWidthDp: Float = 2f,
+    public val connectorRadiusDp: Float = 3.5f,
+    public val arrowLengthDp: Float = 11f,
+    public val arrowWidthDp: Float = 8f,
+) {
+    init {
+        require(nodeCornerRadiusDp.isFinite() && nodeCornerRadiusDp >= 0f)
+        require(nodeStrokeWidthDp.isFinite() && nodeStrokeWidthDp > 0f)
+        require(edgeStrokeWidthDp.isFinite() && edgeStrokeWidthDp > 0f)
+        require(connectorRadiusDp.isFinite() && connectorRadiusDp > 0f)
+        require(arrowLengthDp.isFinite() && arrowLengthDp > 0f)
+        require(arrowWidthDp.isFinite() && arrowWidthDp > 0f)
+    }
+}
 @Immutable public data class FlowchartTypographyTokens(public val nodeTextSizeSp: Float = 14f, public val edgeTextSizeSp: Float = 11f)
 @Immutable public data class FlowchartAccessibilityLabels(public val zoomIn: String = "Zoom in", public val zoomOut: String = "Zoom out", public val centerView: String = "Center flowchart")
 @Immutable public data class FlowchartAnimationPreferences(public val enabled: Boolean = true, public val durationMs: Int = 180)
+
+/** Supplies presentation-only node geometry in node-local coordinates. */
+public fun interface FlowchartNodeShapeProvider {
+    public fun pathFor(node: FlowGraphNode, width: Float, height: Float): Path?
+}
 
 @Immutable
 public data class FlowchartUiConfig(
