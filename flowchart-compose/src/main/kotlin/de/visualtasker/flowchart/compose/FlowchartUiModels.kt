@@ -33,7 +33,16 @@ public data class FlowchartShapeTokens(
     public val connectorRadiusDp: Float = 3.5f,
     public val arrowLengthDp: Float = 11f,
     public val arrowWidthDp: Float = 8f,
-)
+) {
+    init {
+        require(nodeCornerRadiusDp.isFinite() && nodeCornerRadiusDp >= 0f)
+        require(nodeStrokeWidthDp.isFinite() && nodeStrokeWidthDp > 0f)
+        require(edgeStrokeWidthDp.isFinite() && edgeStrokeWidthDp > 0f)
+        require(connectorRadiusDp.isFinite() && connectorRadiusDp > 0f)
+        require(arrowLengthDp.isFinite() && arrowLengthDp > 0f)
+        require(arrowWidthDp.isFinite() && arrowWidthDp > 0f)
+    }
+}
 @Immutable public data class FlowchartTypographyTokens(public val nodeTextSizeSp: Float = 14f, public val edgeTextSizeSp: Float = 11f)
 @Immutable public data class FlowchartAccessibilityLabels(public val zoomIn: String = "Zoom in", public val zoomOut: String = "Zoom out", public val centerView: String = "Center flowchart")
 @Immutable public data class FlowchartAnimationPreferences(public val enabled: Boolean = true, public val durationMs: Int = 180)
@@ -61,7 +70,6 @@ public data class FlowchartUiConfig(
     public val typographyTokens: FlowchartTypographyTokens = FlowchartTypographyTokens(),
     public val accessibilityLabels: FlowchartAccessibilityLabels = FlowchartAccessibilityLabels(),
     public val animationPreferences: FlowchartAnimationPreferences = FlowchartAnimationPreferences(),
-    public val nodeShapeProvider: FlowchartNodeShapeProvider? = null,
 ) { init { require(!semanticEditingEnabled) { "Semantic editing is not supported by the public host" } } }
 
 public data class FlowchartHostCallbacks(
