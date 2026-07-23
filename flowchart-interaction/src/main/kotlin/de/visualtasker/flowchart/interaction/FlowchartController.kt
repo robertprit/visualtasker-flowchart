@@ -61,17 +61,33 @@ public class FlowchartController(
         return result
     }
 
+    public fun replaceViewport(viewport: FlowViewport): FlowViewDocument? {
+        require(viewport.zoom.isFinite() && viewport.zoom > 0.0)
+        require(viewport.pan.x.isFinite() && viewport.pan.y.isFinite())
+        val callback: ((FlowViewDocument) -> Unit)?
+        val view: FlowViewDocument
+        synchronized(lock) {
+            if (state.closed) return null
+            val current = state.view ?: return null
+            view = current.copy(viewport = viewport)
+            state = state.copy(view = view)
+            callback = viewListener
+        }
+        callback?.invoke(view)
+        return view
+    }
+
     public fun replaceLayout(config: FlowLayoutConfig = layoutConfig): FlowViewDocument? {
         val graph = synchronized(lock) { if (state.closed) return null else state.graph } ?: return null
         val layout = FlowLayoutEngine.layout(graph, nodeMetrics, config, state.view)
-        val newView = state.view?.copy(nodeViews = graph.nodes.map { node -> val bounds = layout.nodeBounds[node.id] ?: return@map FlowNodeView(node.id, FlowPoint(0.0, 0.0)); FlowNodeView(node.id, bounds.origin, bounds.size) }, edgeViews = layout.routes.values.map { route -> FlowEdgeView(route.edgeId, route.points.drop(1).dropLast(1).map { it.asPoint() }) }, layoutMetadata = FlowLayoutMetadata("hierarchical", "1", config.deterministicSeed)) ?: return null
+        val newView = state.view?.copy(nodeViews = graph.nodes.map { node -> val bounds = layout.nodeBounds[node.id] ?: return@map FlowNodeView(node.id, FlowPoint(0.0, 0.0)); FlowNodeView(node.id, bounds.origin, bounds.size) }, edgeViews = layout.routes.values.map { route -> FlowEdgeView(route.edgeId, route.points.drop(1).dropLast(1).map { it.asPoint() }) }, layoutMetadata = FlowLayoutMetadata(FlowLayoutEngine.ALGORITHM_ID, FlowLayoutEngine.ALGORITHM_VERSION, config.deterministicSeed)) ?: return null
         synchronized(lock) { if (state.closed) return null; state = state.copy(view = newView) }
         return newView
     }
 
     private fun layoutView(graph: FlowGraphDocument): FlowViewDocument {
         val layout = FlowLayoutEngine.layout(graph, nodeMetrics, layoutConfig)
-        return FlowViewDocument(documentId = graph.documentId, compatibleDocumentRevision = graph.documentRevision, surfaceId = surfaceId, nodeViews = graph.nodes.map { node -> val bounds = layout.nodeBounds[node.id] ?: FlowRect(FlowPoint(0.0, 0.0), nodeMetrics.defaultSize); FlowNodeView(node.id, bounds.origin, bounds.size) }, edgeViews = layout.routes.values.map { route -> FlowEdgeView(route.edgeId, route.points.drop(1).dropLast(1).map { it.asPoint() }) }, layoutMetadata = FlowLayoutMetadata("hierarchical", "1", layoutConfig.deterministicSeed))
+        return FlowViewDocument(documentId = graph.documentId, compatibleDocumentRevision = graph.documentRevision, surfaceId = surfaceId, nodeViews = graph.nodes.map { node -> val bounds = layout.nodeBounds[node.id] ?: FlowRect(FlowPoint(0.0, 0.0), nodeMetrics.defaultSize); FlowNodeView(node.id, bounds.origin, bounds.size) }, edgeViews = layout.routes.values.map { route -> FlowEdgeView(route.edgeId, route.points.drop(1).dropLast(1).map { it.asPoint() }) }, layoutMetadata = FlowLayoutMetadata(FlowLayoutEngine.ALGORITHM_ID, FlowLayoutEngine.ALGORITHM_VERSION, layoutConfig.deterministicSeed))
     }
 
     private fun publishStatus(status: FlowchartStatus): FlowchartStatus { val callback = synchronized(lock) { if (state.closed) null else statusListener }; callback?.invoke(status); return status }

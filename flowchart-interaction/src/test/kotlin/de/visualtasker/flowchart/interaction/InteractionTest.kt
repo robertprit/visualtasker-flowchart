@@ -21,6 +21,26 @@ public class InteractionTest {
         assertEquals(FlowPoint(10.0, 5.0), result.view.nodeViews[0].position)
     }
 
+    @Test public fun `node drag updates are transient and commit creates one undo transaction`() {
+        var result = FlowInteractionReducer.reduce(
+            FlowInteractionState(),
+            FlowInteractionAction.BeginNodeDrag(nodes[0].id, FlowPoint(0.0, 0.0)),
+            graph,
+            view,
+        )
+        result = FlowInteractionReducer.reduce(result.state, FlowInteractionAction.UpdateNodeDrag(FlowPoint(5.0, 0.0)), graph, result.view)
+        result = FlowInteractionReducer.reduce(result.state, FlowInteractionAction.UpdateNodeDrag(FlowPoint(10.0, 0.0)), graph, result.view)
+
+        assertFalse(result.viewChanged)
+        assertTrue(result.state.undoHistory.isEmpty())
+        assertEquals(FlowPoint(10.0, 0.0), result.view.nodeViews[0].position)
+
+        result = FlowInteractionReducer.reduce(result.state, FlowInteractionAction.CommitNodeDrag, graph, result.view)
+
+        assertTrue(result.viewChanged)
+        assertEquals(1, result.state.undoHistory.size)
+    }
+
     @Test public fun `BFS movement moves connected group and cancel restores`() {
         var state = FlowInteractionState(movementMode = FlowMovementMode.CONNECTED_BFS)
         var result = FlowInteractionReducer.reduce(state, FlowInteractionAction.BeginNodeDrag(nodes[0].id, FlowPoint(0.0, 0.0)), graph, view)
