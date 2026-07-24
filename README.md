@@ -1,3 +1,4 @@
+<img width="350" height="550" alt="Screenshot_20260701_003650_VisualTasker Studio (Bearbeitet)" src="https://github.com/user-attachments/assets/773caf8f-0f07-47e4-84be-cbe716fa681f" />
 # visualtasker-flowchart
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
