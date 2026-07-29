@@ -541,8 +541,8 @@ private fun FlowchartToolbarIconButton(
                 this.selected = selected
             },
             colors = IconButtonDefaults.iconButtonColors(
-                containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else androidx.compose.ui.graphics.Color.Transparent,
-                contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                containerColor = if (selected) MaterialTheme.colorScheme.primary else androidx.compose.ui.graphics.Color.Transparent,
+                contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
             ),
         ) {
             Icon(icon, contentDescription = null)

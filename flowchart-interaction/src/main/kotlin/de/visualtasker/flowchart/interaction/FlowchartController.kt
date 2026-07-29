@@ -29,8 +29,18 @@ public class FlowchartController(
         val currentGeneration = synchronized(lock) { if (state.closed) return FlowchartStatus(FlowchartStatusCode.CLOSED, "Controller is closed"); ++generation }
         val viewValidation = view?.let { FlowViewValidator.validate(graph, it) }
         val compatible = view != null && viewValidation?.diagnostics?.none { it.code == FlowValidationCode.GRAPH_IDENTITY_MISMATCH || it.code == FlowValidationCode.REVISION_MISMATCH } == true
-        val installedView = if (compatible) FlowViewValidator.quarantineUnknown(graph, view!!) else layoutView(graph)
-        val status = FlowchartStatus(if (view != null && !compatible) FlowchartStatusCode.STALE_VIEW_DISCARDED else FlowchartStatusCode.ATTACHED, if (compatible) "Graph and view attached" else "Graph attached with deterministic view", viewValidation?.diagnostics.orEmpty())
+        val restoredView = view
+        val trustedRestoredLayout = restoredView != null && compatible && restoredView.layoutMetadata.isCompatibleWith(layoutConfig)
+        val installedView = if (restoredView != null && compatible) {
+            if (trustedRestoredLayout) {
+                FlowViewValidator.quarantineUnknown(graph, restoredView)
+            } else {
+                layoutView(graph, restoredView.viewport)
+            }
+        } else {
+            layoutView(graph)
+        }
+        val status = FlowchartStatus(if (view != null && !compatible) FlowchartStatusCode.STALE_VIEW_DISCARDED else FlowchartStatusCode.ATTACHED, if (trustedRestoredLayout) "Graph and view attached" else "Graph attached with deterministic view", viewValidation?.diagnostics.orEmpty())
         synchronized(lock) {
             if (state.closed || generation != currentGeneration) return FlowchartStatus(FlowchartStatusCode.CLOSED, "Attachment superseded")
             state = FlowchartControllerState(graph, installedView, null, FlowInteractionState(), false)
@@ -85,10 +95,16 @@ public class FlowchartController(
         return newView
     }
 
-    private fun layoutView(graph: FlowGraphDocument): FlowViewDocument {
+    private fun layoutView(graph: FlowGraphDocument, viewport: FlowViewport = FlowViewport()): FlowViewDocument {
         val layout = FlowLayoutEngine.layout(graph, nodeMetrics, layoutConfig)
-        return FlowViewDocument(documentId = graph.documentId, compatibleDocumentRevision = graph.documentRevision, surfaceId = surfaceId, nodeViews = graph.nodes.map { node -> val bounds = layout.nodeBounds[node.id] ?: FlowRect(FlowPoint(0.0, 0.0), nodeMetrics.defaultSize); FlowNodeView(node.id, bounds.origin, bounds.size) }, edgeViews = layout.routes.values.map { route -> FlowEdgeView(route.edgeId, route.points.drop(1).dropLast(1).map { it.asPoint() }) }, layoutMetadata = FlowLayoutMetadata(FlowLayoutEngine.ALGORITHM_ID, FlowLayoutEngine.ALGORITHM_VERSION, layoutConfig.deterministicSeed))
+        return FlowViewDocument(documentId = graph.documentId, compatibleDocumentRevision = graph.documentRevision, surfaceId = surfaceId, viewport = viewport, nodeViews = graph.nodes.map { node -> val bounds = layout.nodeBounds[node.id] ?: FlowRect(FlowPoint(0.0, 0.0), nodeMetrics.defaultSize); FlowNodeView(node.id, bounds.origin, bounds.size) }, edgeViews = layout.routes.values.map { route -> FlowEdgeView(route.edgeId, route.points.drop(1).dropLast(1).map { it.asPoint() }) }, layoutMetadata = FlowLayoutMetadata(FlowLayoutEngine.ALGORITHM_ID, FlowLayoutEngine.ALGORITHM_VERSION, layoutConfig.deterministicSeed))
     }
+
+    private fun FlowLayoutMetadata?.isCompatibleWith(config: FlowLayoutConfig): Boolean =
+        this != null &&
+            algorithmId == FlowLayoutEngine.ALGORITHM_ID &&
+            algorithmVersion == FlowLayoutEngine.ALGORITHM_VERSION &&
+            deterministicSeed == config.deterministicSeed
 
     private fun publishStatus(status: FlowchartStatus): FlowchartStatus { val callback = synchronized(lock) { if (state.closed) null else statusListener }; callback?.invoke(status); return status }
     override fun close() { synchronized(lock) { if (!state.closed) { generation++; state = state.copy(runtime = null, closed = true); viewListener = null; statusListener = null } } }
