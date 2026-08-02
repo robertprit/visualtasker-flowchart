@@ -20,6 +20,33 @@ public class FlowLayoutEngineTest {
         assertTrue(result.routes.values.any { it.kind == FlowRouteKind.LOOP_BACK })
     }
 
+    @Test public fun `loop back and goto routes use left lanes in top to bottom layout`() {
+        val graph = graphWithKinds(
+            nodes = listOf("a", "b", "c"),
+            edges = listOf(
+                edge("a", "b"),
+                edge("b", "a", FlowEdgeKind.LOOP_BACK),
+                edge("b", "c", FlowEdgeKind.GOTO),
+            ),
+        )
+        val result = FlowLayoutEngine.layout(graph)
+        val loopRoute = result.routes.getValue(FlowEdgeId("e1"))
+        val gotoRoute = result.routes.getValue(FlowEdgeId("e2"))
+        val loopLeft = minOf(
+            result.nodeBounds.getValue(FlowNodeId("a")).left,
+            result.nodeBounds.getValue(FlowNodeId("b")).left,
+        )
+        val gotoLeft = minOf(
+            result.nodeBounds.getValue(FlowNodeId("b")).left,
+            result.nodeBounds.getValue(FlowNodeId("c")).left,
+        )
+
+        assertTrue(loopRoute.points.any { it.x < loopLeft })
+        assertTrue(gotoRoute.points.any { it.x < gotoLeft })
+        assertOrthogonal(loopRoute)
+        assertOrthogonal(gotoRoute)
+    }
+
     @Test public fun `long edge uses only internal dummy route points`() {
         val graph = graph(listOf("a", "b", "c"), listOf("a" to "b", "b" to "c", "a" to "c"))
         val result = FlowLayoutEngine.layout(graph)
@@ -63,6 +90,7 @@ public class FlowLayoutEngineTest {
         assertEquals(setOf(FlowEdgeId("e0")), result.selfLoopEdgeIds)
         assertEquals(FlowRouteKind.SELF_LOOP, result.routes.getValue(FlowEdgeId("e0")).kind)
         assertEquals(FlowLayoutEdgeDirection.SELF_LOOP, result.pipelineArtifacts!!.cycleResolution.edgeDirections.getValue(FlowEdgeId("e0")))
+        assertTrue(result.routes.getValue(FlowEdgeId("e0")).points.any { it.x < result.nodeBounds.getValue(FlowNodeId("a")).left })
     }
 
     @Test public fun `parallel edges receive distinguishable manhattan lanes`() {
@@ -212,6 +240,6 @@ public class FlowLayoutEngineTest {
     }
 
     private fun assertSelfLoopLeavesNodeExterior(route: FlowRoute, bounds: FlowRect) {
-        assertTrue(route.points.any { point -> point.x > bounds.right || point.y > bounds.bottom })
+        assertTrue(route.points.any { point -> point.x < bounds.left || point.y < bounds.top })
     }
 }

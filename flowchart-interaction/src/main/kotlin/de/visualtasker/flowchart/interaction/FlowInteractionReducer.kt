@@ -25,7 +25,11 @@ public object FlowInteractionReducer {
     }
 
     private fun beginDrag(state: FlowInteractionState, action: FlowInteractionAction.BeginNodeDrag, graph: FlowGraphDocument, view: FlowViewDocument): FlowInteractionResult {
-        val ids = if (state.movementMode == FlowMovementMode.CONNECTED_BFS) connected(graph, action.nodeId) else setOf(action.nodeId)
+        val ids = when (state.movementMode) {
+            FlowMovementMode.SINGLE -> setOf(action.nodeId)
+            FlowMovementMode.NEXT_FOLLOW_FIRST -> downstream(graph, action.nodeId)
+            FlowMovementMode.CONNECTED_BFS -> connected(graph, action.nodeId)
+        }
         val positions = view.nodeViews.filter { it.nodeId in ids }.associate { it.nodeId to it.position }
         return result(state.copy(dragState = FlowNodeDragState(action.at, action.at, ids, positions)), view)
     }
@@ -137,6 +141,19 @@ public object FlowInteractionReducer {
         val adjacent = graph.edges.flatMap { listOf(it.sourceNodeId to it.targetNodeId, it.targetNodeId to it.sourceNodeId) }.groupBy({ it.first }, { it.second })
         val seen = linkedSetOf(start); val queue = ArrayDeque<FlowNodeId>(); queue += start
         while (queue.isNotEmpty()) adjacent[queue.removeFirst()].orEmpty().sortedBy { it.value }.forEach { if (seen.add(it)) queue += it }
+        return seen
+    }
+
+    private fun downstream(graph: FlowGraphDocument, start: FlowNodeId): Set<FlowNodeId> {
+        val outgoing = graph.edges.groupBy({ it.sourceNodeId }, { it.targetNodeId })
+        val seen = linkedSetOf(start)
+        val queue = ArrayDeque<FlowNodeId>()
+        queue += start
+        while (queue.isNotEmpty()) {
+            outgoing[queue.removeFirst()].orEmpty().sortedBy { it.value }.forEach { next ->
+                if (seen.add(next)) queue += next
+            }
+        }
         return seen
     }
 

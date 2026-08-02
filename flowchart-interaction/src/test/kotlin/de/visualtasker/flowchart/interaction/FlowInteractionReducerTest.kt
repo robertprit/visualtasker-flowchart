@@ -4,7 +4,10 @@ package de.visualtasker.flowchart.interaction
 import de.visualtasker.flowchart.domain.FlowDocumentId
 import de.visualtasker.flowchart.domain.FlowDocumentRevision
 import de.visualtasker.flowchart.domain.FlowGraphDocument
+import de.visualtasker.flowchart.domain.FlowGraphEdge
 import de.visualtasker.flowchart.domain.FlowGraphNode
+import de.visualtasker.flowchart.domain.FlowEdgeId
+import de.visualtasker.flowchart.domain.FlowEdgeKind
 import de.visualtasker.flowchart.domain.FlowNodeId
 import de.visualtasker.flowchart.domain.FlowNodeKind
 import de.visualtasker.flowchart.domain.FlowNodeView
@@ -39,8 +42,43 @@ class FlowInteractionReducerTest {
         assertTrue(panned.viewport.pan.y > -5000.0)
     }
 
-    private fun graph(): FlowGraphDocument {
-        val nodeId = FlowNodeId("start")
+    @Test
+    fun defaultNodeDragMovesDownstreamNodesOnly() {
+        val graph = graph(
+            nodes = listOf("a", "b", "c", "side"),
+            edges = listOf("a" to "b", "b" to "c"),
+        )
+        val view = view(
+            "a" to FlowPoint(0.0, 0.0),
+            "b" to FlowPoint(0.0, 100.0),
+            "c" to FlowPoint(0.0, 200.0),
+            "side" to FlowPoint(300.0, 0.0),
+        )
+
+        val begun = FlowInteractionReducer.reduce(
+            state = FlowInteractionState(),
+            action = FlowInteractionAction.BeginNodeDrag(FlowNodeId("b"), FlowPoint(0.0, 100.0)),
+            graph = graph,
+            view = view,
+        )
+        val moved = FlowInteractionReducer.reduce(
+            state = begun.state,
+            action = FlowInteractionAction.UpdateNodeDrag(FlowPoint(20.0, 130.0)),
+            graph = graph,
+            view = begun.view,
+        ).view
+
+        assertPosition(moved, "a", 0.0, 0.0)
+        assertPosition(moved, "b", 20.0, 130.0)
+        assertPosition(moved, "c", 20.0, 230.0)
+        assertPosition(moved, "side", 300.0, 0.0)
+    }
+
+    private fun graph(
+        nodes: List<String> = listOf("start"),
+        edges: List<Pair<String, String>> = emptyList(),
+    ): FlowGraphDocument {
+        val nodeId = FlowNodeId(nodes.first())
         return FlowGraphDocument(
             documentId = FlowDocumentId("doc"),
             documentRevision = FlowDocumentRevision("1"),
@@ -49,17 +87,35 @@ class FlowInteractionReducerTest {
             sourceRevision = "1",
             sourceHash = "hash",
             entryNodeId = nodeId,
-            nodes = listOf(FlowGraphNode(nodeId, FlowSemanticKind(FlowNodeKind.ENTRY), "Start")),
+            nodes = nodes.map { id ->
+                FlowGraphNode(FlowNodeId(id), FlowSemanticKind(FlowNodeKind.ACTION), id)
+            },
+            edges = edges.mapIndexed { index, edge ->
+                FlowGraphEdge(
+                    FlowEdgeId("e$index"),
+                    FlowNodeId(edge.first),
+                    FlowNodeId(edge.second),
+                    FlowEdgeKind.SEQUENCE,
+                )
+            },
         )
     }
 
-    private fun view(): FlowViewDocument =
+    private fun view(
+        vararg positions: Pair<String, FlowPoint> = arrayOf("start" to FlowPoint(0.0, 0.0)),
+    ): FlowViewDocument =
         FlowViewDocument(
             documentId = FlowDocumentId("doc"),
             compatibleDocumentRevision = FlowDocumentRevision("1"),
             surfaceId = FlowSurfaceId("surface"),
-            nodeViews = listOf(
-                FlowNodeView(FlowNodeId("start"), FlowPoint(0.0, 0.0), FlowSize(160.0, 72.0)),
-            ),
+            nodeViews = positions.map { (id, point) ->
+                FlowNodeView(FlowNodeId(id), point, FlowSize(160.0, 72.0))
+            },
         )
+
+    private fun assertPosition(view: FlowViewDocument, id: String, x: Double, y: Double) {
+        val position = view.nodeViews.first { it.nodeId == FlowNodeId(id) }.position
+        org.junit.Assert.assertEquals(x, position.x, 0.001)
+        org.junit.Assert.assertEquals(y, position.y, 0.001)
+    }
 }

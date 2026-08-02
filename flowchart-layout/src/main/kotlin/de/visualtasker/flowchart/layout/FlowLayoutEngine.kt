@@ -376,6 +376,9 @@ public object FlowLayoutEngine {
         parallelIndex: ParallelIndex,
         config: FlowLayoutConfig,
     ): FlowRoute {
+        if (edge.kind == FlowEdgeKind.GOTO) {
+            return routeJumpEdge(edge, source, target, parallelIndex, config)
+        }
         val start = portOut(source, config.orientation, parallelIndex.offset)
         val end = portIn(target, config.orientation, parallelIndex.offset)
         val directPoints = when (config.orientation) {
@@ -409,17 +412,42 @@ public object FlowLayoutEngine {
         val lane = config.routingClearance + 24.0 + abs(parallelIndex.offset)
         val points = when (config.orientation) {
             FlowLayoutOrientation.TOP_TO_BOTTOM -> {
-                val x = max(source.right, target.right) + lane
+                val x = minOf(source.left, target.left) - lane
                 val y = target.top - lane
                 listOf(start, FlowRoutePoint(x, start.y), FlowRoutePoint(x, y), FlowRoutePoint(end.x, y), end)
             }
             FlowLayoutOrientation.LEFT_TO_RIGHT -> {
-                val y = max(source.bottom, target.bottom) + lane
+                val y = minOf(source.top, target.top) - lane
                 val x = target.left - lane
                 listOf(start, FlowRoutePoint(start.x, y), FlowRoutePoint(x, y), FlowRoutePoint(x, end.y), end)
             }
         }
         return makeRoute(edge.id, FlowRouteKind.LOOP_BACK, collapseDuplicatePoints(points), true)
+    }
+
+    private fun routeJumpEdge(
+        edge: FlowGraphEdge,
+        source: FlowRect,
+        target: FlowRect,
+        parallelIndex: ParallelIndex,
+        config: FlowLayoutConfig,
+    ): FlowRoute {
+        val start = portOut(source, config.orientation, parallelIndex.offset)
+        val end = portIn(target, config.orientation, parallelIndex.offset)
+        val lane = config.routingClearance + 24.0 + abs(parallelIndex.offset)
+        val points = when (config.orientation) {
+            FlowLayoutOrientation.TOP_TO_BOTTOM -> {
+                val x = minOf(source.left, target.left) - lane
+                val y = (start.y + end.y) / 2.0
+                listOf(start, FlowRoutePoint(x, start.y), FlowRoutePoint(x, y), FlowRoutePoint(x, end.y), end)
+            }
+            FlowLayoutOrientation.LEFT_TO_RIGHT -> {
+                val y = minOf(source.top, target.top) - lane
+                val x = (start.x + end.x) / 2.0
+                listOf(start, FlowRoutePoint(start.x, y), FlowRoutePoint(x, y), FlowRoutePoint(end.x, y), end)
+            }
+        }
+        return makeRoute(edge.id, FlowRouteKind.ORTHOGONAL, collapseDuplicatePoints(points), true)
     }
 
     private fun routeSelfLoop(
@@ -431,15 +459,15 @@ public object FlowLayoutEngine {
         val lane = config.routingClearance + 24.0 + abs(parallelIndex.offset)
         val points = when (config.orientation) {
             FlowLayoutOrientation.TOP_TO_BOTTOM -> {
-                val start = FlowRoutePoint(node.right, node.top + node.size.height * 0.35 + parallelIndex.offset)
-                val end = FlowRoutePoint(node.right, node.top + node.size.height * 0.65 + parallelIndex.offset)
-                val x = node.right + lane
+                val start = FlowRoutePoint(node.left, node.top + node.size.height * 0.35 + parallelIndex.offset)
+                val end = FlowRoutePoint(node.left, node.top + node.size.height * 0.65 + parallelIndex.offset)
+                val x = node.left - lane
                 listOf(start, FlowRoutePoint(x, start.y), FlowRoutePoint(x, end.y), end)
             }
             FlowLayoutOrientation.LEFT_TO_RIGHT -> {
-                val start = FlowRoutePoint(node.left + node.size.width * 0.35 + parallelIndex.offset, node.bottom)
-                val end = FlowRoutePoint(node.left + node.size.width * 0.65 + parallelIndex.offset, node.bottom)
-                val y = node.bottom + lane
+                val start = FlowRoutePoint(node.left + node.size.width * 0.35 + parallelIndex.offset, node.top)
+                val end = FlowRoutePoint(node.left + node.size.width * 0.65 + parallelIndex.offset, node.top)
+                val y = node.top - lane
                 listOf(start, FlowRoutePoint(start.x, y), FlowRoutePoint(end.x, y), end)
             }
         }

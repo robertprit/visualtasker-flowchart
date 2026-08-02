@@ -17,12 +17,12 @@ import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CenterFocusStrong
-import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -62,7 +62,7 @@ public fun FlowchartHost(
 ) {
     var controllerState by remember(controller) { mutableStateOf(controller.snapshot()) }
     var hostSize by remember { mutableStateOf(IntSize.Zero) }
-    var gridVisible by remember(graphDocument.documentId) { mutableStateOf(uiConfig.gridEnabled) }
+    val gridVisible = uiConfig.gridEnabled
     DisposableEffect(controller, callbacks) {
         controller.setListeners(
             { callbacks.onViewDocumentChanged(it); controllerState = controller.snapshot() },
@@ -92,15 +92,19 @@ public fun FlowchartHost(
         Box(Modifier.fillMaxSize().testTag("flowchart-empty").semantics { contentDescription = "Empty flowchart" }) { Text("No flowchart nodes", Modifier.padding(24.dp)) }
         return
     }
-    Box(Modifier.fillMaxSize().onSizeChanged { hostSize = it }.background(uiConfig.colorTokens.background)) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .clipToBounds()
+            .onSizeChanged { hostSize = it }
+            .background(uiConfig.colorTokens.background)
+    ) {
         FlowCanvas(graphDocument, view, controllerState.runtime, controllerState.interaction, uiConfig, nodeShapeProvider, gridVisible)
         FlowLabelsAndSemantics(graphDocument, view, controllerState, callbacks)
         FlowGestureLayer(graphDocument, view, controller, uiConfig, callbacks) { controllerState = controller.snapshot() }
         FlowchartIconBar(
             controller = controller,
             config = uiConfig,
-            gridVisible = gridVisible,
-            onToggleGrid = { gridVisible = !gridVisible },
         ) { controllerState = controller.snapshot() }
     }
 }
@@ -473,8 +477,6 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
 private fun FlowchartIconBar(
     controller: FlowchartController,
     config: FlowchartUiConfig,
-    gridVisible: Boolean,
-    onToggleGrid: () -> Unit,
     refresh: () -> Unit,
 ) {
     Surface(
@@ -512,12 +514,6 @@ private fun FlowchartIconBar(
                 icon = Icons.Filled.CenterFocusStrong,
                 onClick = { controller.attachGraph(controller.snapshot().graph ?: return@FlowchartToolbarIconButton, null); refresh() },
             )
-            FlowchartToolbarIconButton(
-                description = config.accessibilityLabels.toggleGrid,
-                icon = Icons.Filled.GridOn,
-                selected = gridVisible,
-                onClick = onToggleGrid,
-            )
         }
     }
 }
@@ -553,7 +549,7 @@ private fun FlowchartToolbarIconButton(
 @Composable private fun FlowLabelsAndSemantics(graph: FlowGraphDocument, view: FlowViewDocument, state: FlowchartControllerState, callbacks: FlowchartHostCallbacks) {
     val density = LocalDensity.current
     fun xDp(value: Double) = with(density) { value.toFloat().toDp() }
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().clipToBounds()) {
         graph.edges.forEach { edge ->
             val label = edge.label ?: when (edge.kind) { FlowEdgeKind.TRUE_BRANCH -> "TRUE"; FlowEdgeKind.FALSE_BRANCH -> "FALSE"; FlowEdgeKind.ELSE_IF_BRANCH -> "ELSE IF"; FlowEdgeKind.LOOP_BACK -> "LOOP"; else -> null } ?: return@forEach
             val points = edgeScreenPoints(edge, graph, view)
