@@ -25,7 +25,11 @@ public object FlowInteractionReducer {
     }
 
     private fun beginDrag(state: FlowInteractionState, action: FlowInteractionAction.BeginNodeDrag, graph: FlowGraphDocument, view: FlowViewDocument): FlowInteractionResult {
-        val ids = if (state.movementMode == FlowMovementMode.CONNECTED_BFS) connected(graph, action.nodeId) else setOf(action.nodeId)
+        val ids = when (state.movementMode) {
+            FlowMovementMode.SINGLE -> setOf(action.nodeId)
+            FlowMovementMode.NEXT_FOLLOW_FIRST -> downstream(graph, action.nodeId)
+            FlowMovementMode.CONNECTED_BFS -> connected(graph, action.nodeId)
+        }
         val positions = view.nodeViews.filter { it.nodeId in ids }.associate { it.nodeId to it.position }
         return result(state.copy(dragState = FlowNodeDragState(action.at, action.at, ids, positions)), view)
     }
@@ -54,7 +58,8 @@ public object FlowInteractionReducer {
     private fun updatePan(state: FlowInteractionState, action: FlowInteractionAction.UpdateViewportPan, view: FlowViewDocument): FlowInteractionResult {
         val pan = state.panState ?: return result(state, view)
         val moved = FlowPoint(pan.originalPan.x + action.at.x - pan.anchor.x, pan.originalPan.y + action.at.y - pan.anchor.y)
-        return FlowInteractionResult(state.copy(panState = pan.copy(latest = action.at)), view.copy(viewport = view.viewport.copy(pan = moved)), false)
+        val movedView = view.copy(viewport = constrainViewportToContent(view, view.viewport.copy(pan = moved)))
+        return FlowInteractionResult(state.copy(panState = pan.copy(latest = action.at)), movedView, false)
     }
 
     private fun commitPan(state: FlowInteractionState, view: FlowViewDocument): FlowInteractionResult {
@@ -68,7 +73,53 @@ public object FlowInteractionReducer {
         val old = view.viewport; val zoom = (old.zoom * action.factor).coerceIn(0.1, 8.0)
         val graphAnchor = FlowViewportTransform.screenToGraph(action.anchor, old)
         val pan = FlowPoint(action.anchor.x - graphAnchor.x * zoom, action.anchor.y - graphAnchor.y * zoom)
-        return FlowInteractionResult(state.copy(undoHistory = state.undoHistory + view, redoHistory = emptyList()), view.copy(viewport = FlowViewport(pan, zoom)), true)
+        val constrained = constrainViewportToContent(view, FlowViewport(pan, zoom))
+        return FlowInteractionResult(state.copy(undoHistory = state.undoHistory + view, redoHistory = emptyList()), view.copy(viewport = constrained), true)
+    }
+
+    internal fun constrainViewportToContent(
+        view: FlowViewDocument,
+        candidate: FlowViewport,
+        viewportWidth: Double = 1024.0,
+        viewportHeight: Double = 768.0,
+        margin: Double = 56.0,
+    ): FlowViewport {
+        if (view.nodeViews.isEmpty() || viewportWidth <= 0.0 || viewportHeight <= 0.0) return candidate
+        if (view.nodeViews.any { it.isVisible(candidate, viewportWidth, viewportHeight, margin) }) return candidate
+
+        val bounds = view.nodeViews.map { node ->
+            val size = node.size ?: FlowSize(160.0, 72.0)
+            FlowRect(node.position, size)
+        }
+        val left = bounds.minOf { it.left }
+        val top = bounds.minOf { it.top }
+        val right = bounds.maxOf { it.right }
+        val bottom = bounds.maxOf { it.bottom }
+        val contentWidth = maxOf(1.0, right - left)
+        val contentHeight = maxOf(1.0, bottom - top)
+        val pan = FlowPoint(
+            x = (viewportWidth - contentWidth * candidate.zoom) / 2.0 - left * candidate.zoom,
+            y = (viewportHeight - contentHeight * candidate.zoom) / 2.0 - top * candidate.zoom,
+        )
+        if (!pan.x.isFinite() || !pan.y.isFinite()) return candidate
+        return candidate.copy(pan = pan)
+    }
+
+    private fun FlowNodeView.isVisible(
+        viewport: FlowViewport,
+        viewportWidth: Double,
+        viewportHeight: Double,
+        margin: Double,
+    ): Boolean {
+        val size = size ?: FlowSize(160.0, 72.0)
+        val left = position.x * viewport.zoom + viewport.pan.x
+        val top = position.y * viewport.zoom + viewport.pan.y
+        val right = (position.x + size.width) * viewport.zoom + viewport.pan.x
+        val bottom = (position.y + size.height) * viewport.zoom + viewport.pan.y
+        return right >= margin &&
+            bottom >= margin &&
+            left <= viewportWidth - margin &&
+            top <= viewportHeight - margin
     }
 
     private fun marquee(state: FlowInteractionState, action: FlowInteractionAction.MarqueeSelection, view: FlowViewDocument): FlowInteractionResult {
@@ -90,6 +141,19 @@ public object FlowInteractionReducer {
         val adjacent = graph.edges.flatMap { listOf(it.sourceNodeId to it.targetNodeId, it.targetNodeId to it.sourceNodeId) }.groupBy({ it.first }, { it.second })
         val seen = linkedSetOf(start); val queue = ArrayDeque<FlowNodeId>(); queue += start
         while (queue.isNotEmpty()) adjacent[queue.removeFirst()].orEmpty().sortedBy { it.value }.forEach { if (seen.add(it)) queue += it }
+        return seen
+    }
+
+    private fun downstream(graph: FlowGraphDocument, start: FlowNodeId): Set<FlowNodeId> {
+        val outgoing = graph.edges.groupBy({ it.sourceNodeId }, { it.targetNodeId })
+        val seen = linkedSetOf(start)
+        val queue = ArrayDeque<FlowNodeId>()
+        queue += start
+        while (queue.isNotEmpty()) {
+            outgoing[queue.removeFirst()].orEmpty().sortedBy { it.value }.forEach { next ->
+                if (seen.add(next)) queue += next
+            }
+        }
         return seen
     }
 

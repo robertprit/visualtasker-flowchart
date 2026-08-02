@@ -25,12 +25,54 @@ public data class FlowLayoutConfig(
 }
 
 public data class FlowNodeMetrics(public val sizes: Map<FlowNodeId, FlowSize>, public val defaultSize: FlowSize = FlowSize(160.0, 72.0))
-public enum class FlowRouteKind { ORTHOGONAL, LOOP_BACK, BRANCH, DIRECT_FALLBACK }
+public enum class FlowRouteKind { ORTHOGONAL, LOOP_BACK, SELF_LOOP, BRANCH, DIRECT_FALLBACK }
 public data class FlowRoutePoint(public val x: Double, public val y: Double) { public fun asPoint(): FlowPoint = FlowPoint(x, y) }
 public data class FlowRouteSegment(public val start: FlowRoutePoint, public val end: FlowRoutePoint)
 public data class FlowRoute(public val edgeId: FlowEdgeId, public val kind: FlowRouteKind, public val points: List<FlowRoutePoint>, public val segments: List<FlowRouteSegment>, public val usesInternalDummyPoints: Boolean = false)
 public enum class FlowLayoutDiagnosticCode { INVALID_GRAPH, NON_FINITE_OUTPUT, ROUTE_FALLBACK }
 public data class FlowLayoutDiagnostic(public val code: FlowLayoutDiagnosticCode, public val message: String, public val edgeId: FlowEdgeId? = null)
+
+public enum class FlowLayoutEdgeDirection { FORWARD, BACK, SELF_LOOP }
+
+public data class FlowNormalizedGraph(
+    public val nodes: List<FlowGraphNode>,
+    public val edges: List<FlowGraphEdge>,
+    public val components: List<Set<FlowNodeId>>,
+)
+
+public data class FlowCycleResolution(
+    public val edgeDirections: Map<FlowEdgeId, FlowLayoutEdgeDirection>,
+) {
+    public val backEdgeIds: Set<FlowEdgeId> get() = edgeDirections.filterValues { it == FlowLayoutEdgeDirection.BACK }.keys
+    public val selfLoopEdgeIds: Set<FlowEdgeId> get() = edgeDirections.filterValues { it == FlowLayoutEdgeDirection.SELF_LOOP }.keys
+}
+
+public data class FlowLayerAssignment(public val ranks: Map<FlowNodeId, Int>)
+
+public data class FlowDummyLayoutNode(
+    public val id: String,
+    public val edgeId: FlowEdgeId,
+    public val rank: Int,
+)
+
+public data class FlowDummyNodeInsertion(
+    public val dummyNodes: List<FlowDummyLayoutNode>,
+    public val edgeIdsUsingDummyNodes: Set<FlowEdgeId>,
+)
+
+public data class FlowCrossingMinimization(public val orderedLayers: Map<Int, List<FlowNodeId>>)
+public data class FlowNodePositioning(public val nodeBounds: Map<FlowNodeId, FlowRect>)
+public data class FlowManhattanRouting(public val routes: Map<FlowEdgeId, FlowRoute>)
+
+public data class FlowLayoutPipelineArtifacts(
+    public val normalizedGraph: FlowNormalizedGraph,
+    public val cycleResolution: FlowCycleResolution,
+    public val layerAssignment: FlowLayerAssignment,
+    public val dummyNodeInsertion: FlowDummyNodeInsertion,
+    public val crossingMinimization: FlowCrossingMinimization,
+    public val nodePositioning: FlowNodePositioning,
+    public val manhattanRouting: FlowManhattanRouting,
+)
 
 public data class FlowLayoutResult(
     public val nodeBounds: Map<FlowNodeId, FlowRect>,
@@ -39,6 +81,8 @@ public data class FlowLayoutResult(
     public val backEdgeIds: Set<FlowEdgeId>,
     public val diagnostics: List<FlowLayoutDiagnostic>,
     public val internalDummyPointCount: Int,
+    public val selfLoopEdgeIds: Set<FlowEdgeId> = emptySet(),
+    public val pipelineArtifacts: FlowLayoutPipelineArtifacts? = null,
 ) {
     public val isValid: Boolean get() = diagnostics.none { it.code == FlowLayoutDiagnosticCode.INVALID_GRAPH || it.code == FlowLayoutDiagnosticCode.NON_FINITE_OUTPUT }
 }

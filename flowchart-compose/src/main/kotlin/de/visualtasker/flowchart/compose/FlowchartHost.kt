@@ -1,32 +1,54 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package de.visualtasker.flowchart.compose
 
+import android.media.AudioManager
+import android.media.ToneGenerator
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CenterFocusStrong
+import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
 import de.visualtasker.flowchart.domain.*
 import de.visualtasker.flowchart.interaction.*
+import kotlin.math.max
+import kotlin.math.min
+
+internal val FlowchartToolbarTouchTargetDp = 48.dp
 
 @Composable
 public fun FlowchartHost(
@@ -39,6 +61,8 @@ public fun FlowchartHost(
     nodeShapeProvider: FlowchartNodeShapeProvider? = null,
 ) {
     var controllerState by remember(controller) { mutableStateOf(controller.snapshot()) }
+    var hostSize by remember { mutableStateOf(IntSize.Zero) }
+    val gridVisible = uiConfig.gridEnabled
     DisposableEffect(controller, callbacks) {
         controller.setListeners(
             { callbacks.onViewDocumentChanged(it); controllerState = controller.snapshot() },
@@ -47,17 +71,91 @@ public fun FlowchartHost(
         onDispose { controller.setListeners(null, null) }
     }
     LaunchedEffect(controller, graphDocument, viewDocument) { controller.attachGraph(graphDocument, viewDocument); controllerState = controller.snapshot() }
+    LaunchedEffect(controller, graphDocument.documentId, graphDocument.documentRevision, hostSize) {
+        val current = controller.snapshot().view ?: return@LaunchedEffect
+        val fitted = fitFlowViewToViewport(current, hostSize)
+        if (fitted != current) {
+            controller.attachGraph(graphDocument, fitted)
+            controllerState = controller.snapshot()
+        }
+    }
+    LaunchedEffect(controller, graphDocument.documentId, hostSize, controllerState.view?.viewport) {
+        val current = controller.snapshot().view ?: return@LaunchedEffect
+        if (hostSize.width > 0 && hostSize.height > 0 && !flowViewHasVisibleNode(current, hostSize)) {
+            controller.attachGraph(graphDocument, fitFlowViewToViewport(current, hostSize))
+            controllerState = controller.snapshot()
+        }
+    }
     LaunchedEffect(controller, runtimeSnapshot) { runtimeSnapshot?.let(controller::attachRuntime); controllerState = controller.snapshot() }
     val view = controllerState.view
     if (graphDocument.nodes.isEmpty() || view == null) {
         Box(Modifier.fillMaxSize().testTag("flowchart-empty").semantics { contentDescription = "Empty flowchart" }) { Text("No flowchart nodes", Modifier.padding(24.dp)) }
         return
     }
-    Box(Modifier.fillMaxSize().background(uiConfig.colorTokens.background)) {
-        FlowCanvas(graphDocument, view, controllerState.runtime, controllerState.interaction, uiConfig, nodeShapeProvider)
+    Box(
+        Modifier
+            .fillMaxSize()
+            .clipToBounds()
+            .onSizeChanged { hostSize = it }
+            .background(uiConfig.colorTokens.background)
+    ) {
+        FlowCanvas(graphDocument, view, controllerState.runtime, controllerState.interaction, uiConfig, nodeShapeProvider, gridVisible)
         FlowLabelsAndSemantics(graphDocument, view, controllerState, callbacks)
         FlowGestureLayer(graphDocument, view, controller, uiConfig, callbacks) { controllerState = controller.snapshot() }
-        ZoomControls(controller, uiConfig) { controllerState = controller.snapshot() }
+        FlowchartIconBar(
+            controller = controller,
+            config = uiConfig,
+        ) { controllerState = controller.snapshot() }
+    }
+}
+
+internal fun fitFlowViewToViewport(
+    view: FlowViewDocument,
+    hostSize: IntSize,
+    marginPx: Double = 56.0,
+    minZoom: Double = 0.25,
+    maxZoom: Double = 1.25,
+): FlowViewDocument {
+    if (hostSize.width <= 0 || hostSize.height <= 0 || view.nodeViews.isEmpty()) return view
+    val bounds = view.nodeViews.map { node ->
+        val size = node.size ?: FlowSize(160.0, 72.0)
+        FlowRect(node.position, size)
+    }
+    val left = bounds.minOf { it.left }
+    val top = bounds.minOf { it.top }
+    val right = bounds.maxOf { it.right }
+    val bottom = bounds.maxOf { it.bottom }
+    val contentWidth = max(1.0, right - left)
+    val contentHeight = max(1.0, bottom - top)
+    val availableWidth = max(1.0, hostSize.width.toDouble() - marginPx * 2)
+    val availableHeight = max(1.0, hostSize.height.toDouble() - marginPx * 2)
+    val zoom = min(availableWidth / contentWidth, availableHeight / contentHeight)
+        .coerceIn(minZoom, maxZoom)
+    val pan = FlowPoint(
+        x = (hostSize.width - contentWidth * zoom) / 2.0 - left * zoom,
+        y = (hostSize.height - contentHeight * zoom) / 2.0 - top * zoom,
+    )
+    if (!pan.x.isFinite() || !pan.y.isFinite() || !zoom.isFinite()) return view
+    val fitted = view.copy(viewport = FlowViewport(pan = pan, zoom = zoom))
+    return if (fitted.viewport == view.viewport) view else fitted
+}
+
+internal fun flowViewHasVisibleNode(
+    view: FlowViewDocument,
+    hostSize: IntSize,
+    marginPx: Double = 24.0,
+): Boolean {
+    if (hostSize.width <= 0 || hostSize.height <= 0) return true
+    return view.nodeViews.any { node ->
+        val size = node.size ?: FlowSize(160.0, 72.0)
+        val left = node.position.x * view.viewport.zoom + view.viewport.pan.x
+        val top = node.position.y * view.viewport.zoom + view.viewport.pan.y
+        val right = (node.position.x + size.width) * view.viewport.zoom + view.viewport.pan.x
+        val bottom = (node.position.y + size.height) * view.viewport.zoom + view.viewport.pan.y
+        right >= marginPx &&
+            bottom >= marginPx &&
+            left <= hostSize.width - marginPx &&
+            top <= hostSize.height - marginPx
     }
 }
 
@@ -69,9 +167,13 @@ private fun FlowCanvas(
     interaction: FlowInteractionState,
     config: FlowchartUiConfig,
     nodeShapeProvider: FlowchartNodeShapeProvider?,
+    gridVisible: Boolean,
 ) {
     Canvas(Modifier.fillMaxSize().testTag("flowchart-canvas")) {
         val viewport = view.viewport
+        if (gridVisible) {
+            drawFlowchartDotGrid(viewport, config)
+        }
         fun screen(point: FlowPoint) = Offset((point.x * viewport.zoom + viewport.pan.x).toFloat(), (point.y * viewport.zoom + viewport.pan.y).toFloat())
         graph.edges.sortedBy { it.id.value }.forEach { edge ->
             val source = view.nodeViews.firstOrNull { it.nodeId == edge.sourceNodeId } ?: return@forEach
@@ -122,10 +224,11 @@ private fun FlowCanvas(
             val size = nodeView.size ?: FlowSize(160.0, 72.0); val origin = screen(nodeView.position); val canvasSize = Size((size.width * viewport.zoom).toFloat(), (size.height * viewport.zoom).toFloat())
             val runtimeState = runtime?.nodeStates?.get(node.id)
             val stroke = when { node.id in interaction.selectedNodeIds -> config.colorTokens.selectedStroke; runtimeState == FlowRuntimeNodeState.FAILED -> config.colorTokens.failedStroke; runtimeState in setOf(FlowRuntimeNodeState.RUNNING, FlowRuntimeNodeState.WAITING) -> config.colorTokens.runningStroke; else -> config.colorTokens.nodeStroke }
+            val fill = flowNodeFill(node, config)
             val visualPath = resolveNodeShape(nodeShapeProvider, node, canvasSize.width, canvasSize.height)
             if (visualPath != null) {
                 translate(origin.x, origin.y) {
-                    drawPath(visualPath, config.colorTokens.nodeFill)
+                    drawPath(visualPath, fill)
                     drawPath(
                         path = visualPath,
                         color = stroke,
@@ -140,12 +243,63 @@ private fun FlowCanvas(
                     )
                 }
             } else {
-                drawRoundRect(config.colorTokens.nodeFill, origin, canvasSize, CornerRadius(config.shapeTokens.nodeCornerRadiusDp.dp.toPx()))
+                drawRoundRect(fill, origin, canvasSize, CornerRadius(config.shapeTokens.nodeCornerRadiusDp.dp.toPx()))
                 drawRoundRect(stroke, origin, canvasSize, CornerRadius(config.shapeTokens.nodeCornerRadiusDp.dp.toPx()), style = Stroke(config.shapeTokens.nodeStrokeWidthDp.dp.toPx(), pathEffect = if (node.kind.standard == FlowNodeKind.UNKNOWN_SOURCE || node.kind.extensionId != null) PathEffect.dashPathEffect(floatArrayOf(10f, 6f)) else null))
             }
             if (config.diagnosticMarkersEnabled && node.diagnosticIds.isNotEmpty()) drawCircle(config.colorTokens.diagnostic, 6.dp.toPx(), Offset(origin.x + canvasSize.width - 10.dp.toPx(), origin.y + 10.dp.toPx()))
         }
     }
+}
+
+internal fun flowNodeFill(
+    node: FlowGraphNode,
+    config: FlowchartUiConfig,
+): androidx.compose.ui.graphics.Color = when (node.kind.standard) {
+    FlowNodeKind.ENTRY,
+    FlowNodeKind.EXIT -> config.colorTokens.triggerNodeFill
+
+    FlowNodeKind.DECISION,
+    FlowNodeKind.ELSE_IF,
+    FlowNodeKind.ELSE,
+    FlowNodeKind.LOOP_START,
+    FlowNodeKind.LOOP_END,
+    FlowNodeKind.TRY_START,
+    FlowNodeKind.CATCH,
+    FlowNodeKind.TRY_END -> config.colorTokens.decisionNodeFill
+
+    FlowNodeKind.INPUT,
+    FlowNodeKind.OUTPUT -> config.colorTokens.ioNodeFill
+
+    FlowNodeKind.UNKNOWN_SOURCE,
+    null -> config.colorTokens.unknownNodeFill
+
+    else -> config.colorTokens.actionNodeFill
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawFlowchartDotGrid(
+    viewport: FlowViewport,
+    config: FlowchartUiConfig,
+) {
+    val baseSpacing = 24.dp.toPx()
+    val spacing = (baseSpacing * viewport.zoom.toFloat()).coerceIn(12.dp.toPx(), 48.dp.toPx())
+    val radius = 1.25.dp.toPx()
+    val startX = positiveModulo(viewport.pan.x.toFloat(), spacing)
+    val startY = positiveModulo(viewport.pan.y.toFloat(), spacing)
+    var x = startX
+    while (x <= size.width) {
+        var y = startY
+        while (y <= size.height) {
+            drawCircle(config.colorTokens.gridDot, radius, Offset(x, y))
+            y += spacing
+        }
+        x += spacing
+    }
+}
+
+private fun positiveModulo(value: Float, mod: Float): Float {
+    if (mod <= 0f || !value.isFinite() || !mod.isFinite()) return 0f
+    val remainder = value % mod
+    return if (remainder < 0f) remainder + mod else remainder
 }
 
 internal fun resolveNodeShape(
@@ -232,10 +386,35 @@ internal fun flowArrowHead(
 private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, controller: FlowchartController, config: FlowchartUiConfig, callbacks: FlowchartHostCallbacks, refresh: () -> Unit) {
     var dragNode by remember { mutableStateOf<FlowNodeId?>(null) }
     var panning by remember { mutableStateOf(false) }
+    val platformView = LocalView.current
+    val haptic = LocalHapticFeedback.current
     val currentView by rememberUpdatedState(view)
     var previousTapAt by remember { mutableLongStateOf(0L) }
     var previousTapPosition by remember { mutableStateOf<Offset?>(null) }
     val modifier = Modifier.fillMaxSize().testTag("flowchart-gestures")
+        .pointerInput(graph, config.panEnabled, config.zoomEnabled) {
+            detectTransformGestures { centroid, pan, zoom, _ ->
+                if (!config.panEnabled && !config.zoomEnabled) return@detectTransformGestures
+                val current = controller.snapshot().view ?: return@detectTransformGestures
+                val old = current.viewport
+                val nextZoom = if (config.zoomEnabled) {
+                    (old.zoom * zoom.toDouble()).coerceIn(0.1, 8.0)
+                } else {
+                    old.zoom
+                }
+                val anchor = FlowPoint(centroid.x.toDouble(), centroid.y.toDouble())
+                val graphAnchor = FlowViewportTransform.screenToGraph(anchor, old)
+                val panX = if (config.zoomEnabled) anchor.x - graphAnchor.x * nextZoom else old.pan.x
+                val panY = if (config.zoomEnabled) anchor.y - graphAnchor.y * nextZoom else old.pan.y
+                val nextPan = if (config.panEnabled) {
+                    FlowPoint(panX + pan.x.toDouble(), panY + pan.y.toDouble())
+                } else {
+                    FlowPoint(panX, panY)
+                }
+                controller.replaceViewport(FlowViewport(nextPan, nextZoom))
+                refresh()
+            }
+        }
         .pointerInput(graph, config) {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
@@ -256,8 +435,13 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
                         refresh()
                     }
                     if (completed) {
-                        if (dragNode != null) controller.dispatch(FlowInteractionAction.CommitNodeDrag)
-                        else if (panning) controller.dispatch(FlowInteractionAction.CommitViewportPan)
+                        if (dragNode != null) {
+                            controller.dispatch(FlowInteractionAction.CommitNodeDrag)
+                            playEditorSound(platformView, config.soundEffectsEnabled)
+                            if (config.hapticFeedbackEnabled) {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            }
+                        } else if (panning) controller.dispatch(FlowInteractionAction.CommitViewportPan)
                     } else if (dragNode != null) {
                         controller.dispatch(FlowInteractionAction.CancelNodeDrag)
                     }
@@ -289,20 +473,83 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
     Box(modifier)
 }
 
-@Composable private fun ZoomControls(controller: FlowchartController, config: FlowchartUiConfig, refresh: () -> Unit) {
-    Row(Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (config.zoomEnabled) {
-            Button({ controller.dispatch(FlowInteractionAction.ZoomViewport(1.2, FlowPoint(0.0, 0.0))); refresh() }, Modifier.semantics { contentDescription = config.accessibilityLabels.zoomIn }) { Text("+") }
-            Button({ controller.dispatch(FlowInteractionAction.ZoomViewport(1 / 1.2, FlowPoint(0.0, 0.0))); refresh() }, Modifier.semantics { contentDescription = config.accessibilityLabels.zoomOut }) { Text("−") }
+@Composable
+private fun FlowchartIconBar(
+    controller: FlowchartController,
+    config: FlowchartUiConfig,
+    refresh: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.padding(8.dp),
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        tonalElevation = 2.dp,
+    ) {
+        Row(Modifier.padding(horizontal = 4.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            FlowchartToolbarIconButton(
+                description = config.accessibilityLabels.undoView,
+                icon = Icons.AutoMirrored.Filled.Undo,
+                onClick = { controller.dispatch(FlowInteractionAction.UndoViewChange); refresh() },
+            )
+            FlowchartToolbarIconButton(
+                description = config.accessibilityLabels.redoView,
+                icon = Icons.AutoMirrored.Filled.Redo,
+                onClick = { controller.dispatch(FlowInteractionAction.RedoViewChange); refresh() },
+            )
+            if (config.zoomEnabled) {
+                FlowchartToolbarIconButton(
+                    description = config.accessibilityLabels.zoomOut,
+                    icon = Icons.Filled.ZoomOut,
+                    onClick = { controller.dispatch(FlowInteractionAction.ZoomViewport(1 / 1.2, FlowPoint(0.0, 0.0))); refresh() },
+                )
+                FlowchartToolbarIconButton(
+                    description = config.accessibilityLabels.zoomIn,
+                    icon = Icons.Filled.ZoomIn,
+                    onClick = { controller.dispatch(FlowInteractionAction.ZoomViewport(1.2, FlowPoint(0.0, 0.0))); refresh() },
+                )
+            }
+            FlowchartToolbarIconButton(
+                description = config.accessibilityLabels.centerView,
+                icon = Icons.Filled.CenterFocusStrong,
+                onClick = { controller.attachGraph(controller.snapshot().graph ?: return@FlowchartToolbarIconButton, null); refresh() },
+            )
         }
-        Button({ controller.attachGraph(controller.snapshot().graph ?: return@Button, null); refresh() }, Modifier.semantics { contentDescription = config.accessibilityLabels.centerView }) { Text("Center") }
+    }
+}
+
+@Composable
+private fun FlowchartToolbarIconButton(
+    description: String,
+    icon: ImageVector,
+    selected: Boolean = false,
+    onClick: () -> Unit,
+) {
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = { PlainTooltip { Text(description) } },
+        state = rememberTooltipState(),
+    ) {
+        IconButton(
+            onClick = onClick,
+            modifier = Modifier.size(FlowchartToolbarTouchTargetDp).semantics {
+                contentDescription = description
+                this.selected = selected
+            },
+            colors = IconButtonDefaults.iconButtonColors(
+                containerColor = if (selected) MaterialTheme.colorScheme.primary else androidx.compose.ui.graphics.Color.Transparent,
+                contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+            ),
+        ) {
+            Icon(icon, contentDescription = null)
+        }
     }
 }
 
 @Composable private fun FlowLabelsAndSemantics(graph: FlowGraphDocument, view: FlowViewDocument, state: FlowchartControllerState, callbacks: FlowchartHostCallbacks) {
     val density = LocalDensity.current
     fun xDp(value: Double) = with(density) { value.toFloat().toDp() }
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().clipToBounds()) {
         graph.edges.forEach { edge ->
             val label = edge.label ?: when (edge.kind) { FlowEdgeKind.TRUE_BRANCH -> "TRUE"; FlowEdgeKind.FALSE_BRANCH -> "FALSE"; FlowEdgeKind.ELSE_IF_BRANCH -> "ELSE IF"; FlowEdgeKind.LOOP_BACK -> "LOOP"; else -> null } ?: return@forEach
             val points = edgeScreenPoints(edge, graph, view)
@@ -322,6 +569,19 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
             onLongClick("Invoke node") { callbacks.onNodeInvoked(node.id); true }
         }) { Column { Text(node.label, style = MaterialTheme.typography.bodyMedium); Text(node.kind.displayName ?: node.kind.standard?.name ?: "Extension", style = MaterialTheme.typography.labelSmall); runtime?.let { Text(it.name, style = MaterialTheme.typography.labelSmall) } } }
     } }
+}
+
+private fun playEditorSound(
+    platformView: android.view.View,
+    enabled: Boolean,
+) {
+    if (!enabled) return
+    platformView.playSoundEffect(android.view.SoundEffectConstants.CLICK)
+    runCatching {
+        val tone = ToneGenerator(AudioManager.STREAM_SYSTEM, 32)
+        tone.startTone(ToneGenerator.TONE_PROP_BEEP, 35)
+        platformView.postDelayed({ tone.release() }, 80L)
+    }
 }
 
 private fun hitNode(offset: Offset, view: FlowViewDocument): FlowNodeId? {

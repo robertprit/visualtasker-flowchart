@@ -13,7 +13,13 @@ public enum class FlowchartInteractionMode { VIEW_ONLY, VIEW_INTERACTION }
 @Immutable
 public data class FlowchartColorTokens(
     public val background: Color = Color(0xFFF8F9FF),
-    public val nodeFill: Color = Color(0xFFFFFFFF),
+    public val gridDot: Color = Color(0x33596173),
+    public val nodeFill: Color = Color(0xFFEFF3FF),
+    public val triggerNodeFill: Color = Color(0xFFFFDDB7),
+    public val actionNodeFill: Color = nodeFill,
+    public val decisionNodeFill: Color = Color(0xFFEADDFF),
+    public val ioNodeFill: Color = Color(0xFFDDEFFF),
+    public val unknownNodeFill: Color = Color(0xFFFFDAD6),
     public val nodeStroke: Color = Color(0xFF3F4758),
     public val selectedStroke: Color = Color(0xFF0057D9),
     public val runningStroke: Color = Color(0xFF006C45),
@@ -44,7 +50,14 @@ public data class FlowchartShapeTokens(
     }
 }
 @Immutable public data class FlowchartTypographyTokens(public val nodeTextSizeSp: Float = 14f, public val edgeTextSizeSp: Float = 11f)
-@Immutable public data class FlowchartAccessibilityLabels(public val zoomIn: String = "Zoom in", public val zoomOut: String = "Zoom out", public val centerView: String = "Center flowchart")
+@Immutable public data class FlowchartAccessibilityLabels(
+    public val zoomIn: String = "Zoom in",
+    public val zoomOut: String = "Zoom out",
+    public val centerView: String = "Center flowchart",
+    public val undoView: String = "Undo view change",
+    public val redoView: String = "Redo view change",
+    public val toggleGrid: String = "Toggle grid",
+)
 @Immutable public data class FlowchartAnimationPreferences(public val enabled: Boolean = true, public val durationMs: Int = 180)
 
 /** Supplies presentation-only node geometry in node-local coordinates. */
@@ -63,6 +76,9 @@ public data class FlowchartUiConfig(
     public val edgeSelectionEnabled: Boolean = true,
     public val runtimeOverlayEnabled: Boolean = true,
     public val diagnosticMarkersEnabled: Boolean = true,
+    public val gridEnabled: Boolean = true,
+    public val soundEffectsEnabled: Boolean = false,
+    public val hapticFeedbackEnabled: Boolean = false,
     public val minimapEnabled: Boolean = false,
     public val layoutOrientation: FlowLayoutOrientation = FlowLayoutOrientation.TOP_TO_BOTTOM,
     public val shapeTokens: FlowchartShapeTokens = FlowchartShapeTokens(),
