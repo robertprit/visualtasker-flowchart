@@ -84,6 +84,7 @@ private fun FlowCanvas(
             val edgeColor = when (flowEdgeVisualCategory(edge.kind)) {
                 FlowchartEdgeVisualCategory.DEFAULT -> config.colorTokens.edge
                 FlowchartEdgeVisualCategory.BRANCH -> config.colorTokens.branchEdge
+                FlowchartEdgeVisualCategory.DATA -> config.colorTokens.dataEdge
                 FlowchartEdgeVisualCategory.LOOP -> config.colorTokens.loopEdge
                 FlowchartEdgeVisualCategory.ERROR -> config.colorTokens.errorEdge
             }
@@ -121,11 +122,12 @@ private fun FlowCanvas(
             val nodeView = view.nodeViews.firstOrNull { it.nodeId == node.id } ?: return@forEach
             val size = nodeView.size ?: FlowSize(160.0, 72.0); val origin = screen(nodeView.position); val canvasSize = Size((size.width * viewport.zoom).toFloat(), (size.height * viewport.zoom).toFloat())
             val runtimeState = runtime?.nodeStates?.get(node.id)
+            val nodeFillColor = flowNodeFillColor(node, config.colorTokens)
             val stroke = when { node.id in interaction.selectedNodeIds -> config.colorTokens.selectedStroke; runtimeState == FlowRuntimeNodeState.FAILED -> config.colorTokens.failedStroke; runtimeState in setOf(FlowRuntimeNodeState.RUNNING, FlowRuntimeNodeState.WAITING) -> config.colorTokens.runningStroke; else -> config.colorTokens.nodeStroke }
             val visualPath = resolveNodeShape(nodeShapeProvider, node, canvasSize.width, canvasSize.height)
             if (visualPath != null) {
                 translate(origin.x, origin.y) {
-                    drawPath(visualPath, config.colorTokens.nodeFill)
+                    drawPath(visualPath, nodeFillColor)
                     drawPath(
                         path = visualPath,
                         color = stroke,
@@ -140,7 +142,7 @@ private fun FlowCanvas(
                     )
                 }
             } else {
-                drawRoundRect(config.colorTokens.nodeFill, origin, canvasSize, CornerRadius(config.shapeTokens.nodeCornerRadiusDp.dp.toPx()))
+                drawRoundRect(nodeFillColor, origin, canvasSize, CornerRadius(config.shapeTokens.nodeCornerRadiusDp.dp.toPx()))
                 drawRoundRect(stroke, origin, canvasSize, CornerRadius(config.shapeTokens.nodeCornerRadiusDp.dp.toPx()), style = Stroke(config.shapeTokens.nodeStrokeWidthDp.dp.toPx(), pathEffect = if (node.kind.standard == FlowNodeKind.UNKNOWN_SOURCE || node.kind.extensionId != null) PathEffect.dashPathEffect(floatArrayOf(10f, 6f)) else null))
             }
             if (config.diagnosticMarkersEnabled && node.diagnosticIds.isNotEmpty()) drawCircle(config.colorTokens.diagnostic, 6.dp.toPx(), Offset(origin.x + canvasSize.width - 10.dp.toPx(), origin.y + 10.dp.toPx()))
@@ -158,6 +160,7 @@ internal fun resolveNodeShape(
 internal enum class FlowchartEdgeVisualCategory {
     DEFAULT,
     BRANCH,
+    DATA,
     LOOP,
     ERROR,
 }
@@ -165,7 +168,10 @@ internal enum class FlowchartEdgeVisualCategory {
 internal fun flowEdgeVisualCategory(kind: FlowEdgeKind): FlowchartEdgeVisualCategory = when (kind) {
     FlowEdgeKind.TRUE_BRANCH,
     FlowEdgeKind.FALSE_BRANCH,
-    FlowEdgeKind.ELSE_IF_BRANCH -> FlowchartEdgeVisualCategory.BRANCH
+    FlowEdgeKind.ELSE_IF_BRANCH,
+    FlowEdgeKind.CONDITION -> FlowchartEdgeVisualCategory.BRANCH
+
+    FlowEdgeKind.DATA_FLOW -> FlowchartEdgeVisualCategory.DATA
 
     FlowEdgeKind.LOOP_BODY,
     FlowEdgeKind.LOOP_BACK,
@@ -180,6 +186,21 @@ internal fun flowEdgeVisualCategory(kind: FlowEdgeKind): FlowchartEdgeVisualCate
     FlowEdgeKind.FUNCTION_RETURN,
     FlowEdgeKind.EVENT,
     FlowEdgeKind.GOTO -> FlowchartEdgeVisualCategory.DEFAULT
+}
+
+internal fun flowNodeFillColor(
+    node: FlowGraphNode,
+    tokens: FlowchartColorTokens,
+): androidx.compose.ui.graphics.Color {
+    val blockType = (node.properties["blockType"] as? FlowSemanticValue.StringValue)?.value
+    return when {
+        blockType == null -> tokens.nodeFill
+        blockType.startsWith("event.") -> tokens.eventNodeFill
+        blockType.startsWith("control.") -> tokens.controlNodeFill
+        blockType.startsWith("logic.") || blockType.startsWith("literal.") -> tokens.logicNodeFill
+        blockType.startsWith("variable.") || blockType.startsWith("variables.") -> tokens.variableNodeFill
+        else -> tokens.nodeFill
+    }
 }
 
 internal data class FlowchartEdgePresentation(

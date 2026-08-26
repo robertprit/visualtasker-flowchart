@@ -124,7 +124,13 @@ public object FlowLayoutEngine {
             FlowLayoutOrientation.TOP_TO_BOTTOM -> { val lane = obstacles.maxOfOrNull { it.right }?.plus(config.routingClearance) ?: max(source.right, target.right) + config.routingClearance; listOf(start, FlowRoutePoint(lane, start.y), FlowRoutePoint(lane, end.y), end) }
             FlowLayoutOrientation.LEFT_TO_RIGHT -> { val lane = obstacles.maxOfOrNull { it.bottom }?.plus(config.routingClearance) ?: max(source.bottom, target.bottom) + config.routingClearance; listOf(start, FlowRoutePoint(start.x, lane), FlowRoutePoint(end.x, lane), end) }
         } else directPoints
-        val kind = if (edge.kind in setOf(FlowEdgeKind.TRUE_BRANCH, FlowEdgeKind.FALSE_BRANCH, FlowEdgeKind.ELSE_IF_BRANCH)) FlowRouteKind.BRANCH else FlowRouteKind.ORTHOGONAL
+        val kind = if (edge.kind in setOf(
+                FlowEdgeKind.TRUE_BRANCH,
+                FlowEdgeKind.FALSE_BRANCH,
+                FlowEdgeKind.ELSE_IF_BRANCH,
+                FlowEdgeKind.CONDITION,
+            )
+        ) FlowRouteKind.BRANCH else FlowRouteKind.ORTHOGONAL
         return makeRoute(edge.id, kind, points.distinct(), rankDistance > 1)
     }
 

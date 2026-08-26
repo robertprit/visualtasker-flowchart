@@ -8,6 +8,7 @@ import de.visualtasker.flowchart.domain.FlowGraphNode
 import de.visualtasker.flowchart.domain.FlowNodeId
 import de.visualtasker.flowchart.domain.FlowNodeKind
 import de.visualtasker.flowchart.domain.FlowSemanticKind
+import de.visualtasker.flowchart.domain.FlowSemanticValue
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -101,9 +102,31 @@ public class FlowchartUiConfigTest {
 
         assertEquals(FlowEdgeKind.entries.size, categories.size)
         assertEquals(FlowchartEdgeVisualCategory.BRANCH, categories.getValue(FlowEdgeKind.TRUE_BRANCH))
+        assertEquals(FlowchartEdgeVisualCategory.BRANCH, categories.getValue(FlowEdgeKind.CONDITION))
+        assertEquals(FlowchartEdgeVisualCategory.DATA, categories.getValue(FlowEdgeKind.DATA_FLOW))
         assertEquals(FlowchartEdgeVisualCategory.LOOP, categories.getValue(FlowEdgeKind.LOOP_BACK))
         assertEquals(FlowchartEdgeVisualCategory.ERROR, categories.getValue(FlowEdgeKind.ERROR))
         assertEquals(FlowchartEdgeVisualCategory.DEFAULT, categories.getValue(FlowEdgeKind.SEQUENCE))
+    }
+
+    @Test
+    public fun `node fill color maps block type families`() {
+        val tokens = FlowchartColorTokens()
+        val logicNode = FlowGraphNode(
+            id = FlowNodeId("logic"),
+            kind = FlowSemanticKind(FlowNodeKind.ASSIGNMENT),
+            label = "Logic",
+            properties = mapOf("blockType" to FlowSemanticValue.StringValue("logic.compare")),
+        )
+        val variableNode = FlowGraphNode(
+            id = FlowNodeId("var"),
+            kind = FlowSemanticKind(FlowNodeKind.PROPERTY_ACCESS),
+            label = "Var",
+            properties = mapOf("blockType" to FlowSemanticValue.StringValue("variable.reporter.v1")),
+        )
+
+        assertEquals(tokens.logicNodeFill, flowNodeFillColor(logicNode, tokens))
+        assertEquals(tokens.variableNodeFill, flowNodeFillColor(variableNode, tokens))
     }
 
     @Test

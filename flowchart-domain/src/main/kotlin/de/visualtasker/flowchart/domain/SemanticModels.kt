@@ -27,6 +27,7 @@ public data class FlowSemanticKind(
 public enum class FlowEdgeKind {
     SEQUENCE, TRUE_BRANCH, FALSE_BRANCH, ELSE_IF_BRANCH, LOOP_BODY, LOOP_BACK, LOOP_EXIT,
     TRY_BODY, CATCH_BODY, ERROR, FUNCTION_CALL, FUNCTION_RETURN, EVENT, GOTO,
+    DATA_FLOW, CONDITION,
 }
 
 @Serializable
