@@ -29,8 +29,26 @@ public class FlowchartController(
         val currentGeneration = synchronized(lock) { if (state.closed) return FlowchartStatus(FlowchartStatusCode.CLOSED, "Controller is closed"); ++generation }
         val viewValidation = view?.let { FlowViewValidator.validate(graph, it) }
         val compatible = view != null && viewValidation?.diagnostics?.none { it.code == FlowValidationCode.GRAPH_IDENTITY_MISMATCH || it.code == FlowValidationCode.REVISION_MISMATCH } == true
-        val installedView = if (compatible) FlowViewValidator.quarantineUnknown(graph, view!!) else layoutView(graph)
-        val status = FlowchartStatus(if (view != null && !compatible) FlowchartStatusCode.STALE_VIEW_DISCARDED else FlowchartStatusCode.ATTACHED, if (compatible) "Graph and view attached" else "Graph attached with deterministic view", viewValidation?.diagnostics.orEmpty())
+        val canRebaseStaleView = view != null && !compatible && viewValidation?.canRebaseAcrossRevision() == true
+        val installedView = when {
+            compatible -> FlowViewValidator.quarantineUnknown(graph, view!!)
+            canRebaseStaleView -> rebaseViewForGraph(graph, view!!)
+            else -> layoutView(graph)
+        }
+        val status = FlowchartStatus(
+            when {
+                view != null && !compatible && !canRebaseStaleView -> FlowchartStatusCode.STALE_VIEW_DISCARDED
+                else -> FlowchartStatusCode.ATTACHED
+            },
+            when {
+                compatible -> "Graph and view attached"
+                canRebaseStaleView -> "Graph and stale view rebased"
+                else -> "Graph attached with deterministic view"
+            },
+            viewValidation?.diagnostics.orEmpty().filterNot {
+                canRebaseStaleView && it.code == FlowValidationCode.REVISION_MISMATCH
+            },
+        )
         synchronized(lock) {
             if (state.closed || generation != currentGeneration) return FlowchartStatus(FlowchartStatusCode.CLOSED, "Attachment superseded")
             state = FlowchartControllerState(graph, installedView, null, FlowInteractionState(), false)
@@ -89,6 +107,24 @@ public class FlowchartController(
         val layout = FlowLayoutEngine.layout(graph, nodeMetrics, layoutConfig)
         return FlowViewDocument(documentId = graph.documentId, compatibleDocumentRevision = graph.documentRevision, surfaceId = surfaceId, nodeViews = graph.nodes.map { node -> val bounds = layout.nodeBounds[node.id] ?: FlowRect(FlowPoint(0.0, 0.0), nodeMetrics.defaultSize); FlowNodeView(node.id, bounds.origin, bounds.size) }, edgeViews = layout.routes.values.map { route -> FlowEdgeView(route.edgeId, route.points.drop(1).dropLast(1).map { it.asPoint() }) }, layoutMetadata = FlowLayoutMetadata("hierarchical", "1", layoutConfig.deterministicSeed))
     }
+
+    private fun rebaseViewForGraph(graph: FlowGraphDocument, view: FlowViewDocument): FlowViewDocument {
+        val baseline = layoutView(graph)
+        val knownNodes = view.nodeViews.associateBy { it.nodeId }
+        val knownEdges = view.edgeViews.associateBy { it.edgeId }
+        return FlowViewValidator.quarantineUnknown(graph, view).copy(
+            compatibleDocumentRevision = graph.documentRevision,
+            nodeViews = baseline.nodeViews.map { nodeView -> knownNodes[nodeView.nodeId] ?: nodeView },
+            edgeViews = baseline.edgeViews.map { edgeView -> knownEdges[edgeView.edgeId] ?: edgeView },
+            layoutMetadata = baseline.layoutMetadata,
+        )
+    }
+
+    private fun FlowValidationResult.canRebaseAcrossRevision(): Boolean =
+        diagnostics.none { diagnostic ->
+            diagnostic.severity == FlowValidationSeverity.ERROR &&
+                diagnostic.code != FlowValidationCode.REVISION_MISMATCH
+        }
 
     private fun publishStatus(status: FlowchartStatus): FlowchartStatus { val callback = synchronized(lock) { if (state.closed) null else statusListener }; callback?.invoke(status); return status }
     override fun close() { synchronized(lock) { if (!state.closed) { generation++; state = state.copy(runtime = null, closed = true); viewListener = null; statusListener = null } } }

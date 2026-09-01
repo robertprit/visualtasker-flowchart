@@ -100,6 +100,27 @@ public class InteractionTest {
         controller.close(); controller.dispatch(FlowInteractionAction.ClearSelection); assertEquals(1, calls)
     }
 
+    @Test public fun `controller rebases stale view across same graph identity revision`() {
+        val controller = FlowchartController(FlowSurfaceId("s"))
+        val staleView = view.copy(
+            viewport = FlowViewport(pan = FlowPoint(42.0, -17.0), zoom = 1.75),
+            nodeViews = view.nodeViews.map {
+                if (it.nodeId == nodes[0].id) it.copy(position = FlowPoint(123.0, 456.0)) else it
+            },
+        )
+        val revisedGraph = graph.copy(documentRevision = FlowDocumentRevision("2"))
+
+        val status = controller.attachGraph(revisedGraph, staleView)
+        val installed = controller.snapshot().view!!
+
+        assertEquals(FlowchartStatusCode.ATTACHED, status.code)
+        assertEquals(revisedGraph.documentRevision, installed.compatibleDocumentRevision)
+        assertEquals(staleView.viewport, installed.viewport)
+        assertEquals(FlowPoint(123.0, 456.0), installed.nodeViews.single { it.nodeId == nodes[0].id }.position)
+
+        controller.close()
+    }
+
     @Test public fun `stale runtime snapshot is rejected`() {
         val controller = FlowchartController(FlowSurfaceId("s")); controller.attachGraph(graph, view)
         fun runtime(sequence: Long) = FlowRuntimeSnapshot(runId = FlowRunId("r"), sourceSessionId = FlowSourceSessionId("s"), documentId = graph.documentId, documentRevision = graph.documentRevision, sequence = sequence, capturedAtEpochMs = 1)
