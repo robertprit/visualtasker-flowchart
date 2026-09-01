@@ -65,7 +65,10 @@ public object FlowLayoutEngine {
         val ranks = nodes.associateWith { 0 }.toMutableMap()
         val colors = mutableMapOf<FlowNodeId, Int>()
         val back = linkedSetOf<FlowEdgeId>()
-        val outgoing = edges.filter { it.sourceNodeId in nodes && it.targetNodeId in nodes }.groupBy { it.sourceNodeId }
+        val rankingEdges = edges
+            .filter { it.sourceNodeId in nodes && it.targetNodeId in nodes }
+            .filterNot { it.kind == FlowEdgeKind.DATA_FLOW || it.kind == FlowEdgeKind.CONDITION }
+        val outgoing = rankingEdges.groupBy { it.sourceNodeId }
         fun visit(node: FlowNodeId) {
             colors[node] = 1
             outgoing[node].orEmpty().sortedBy { it.id.value }.forEach { edge ->
@@ -78,7 +81,7 @@ public object FlowLayoutEngine {
         }
         nodes.sortedBy { it.value }.forEach { if ((colors[it] ?: 0) == 0) visit(it) }
         repeat(nodes.size) {
-            edges.filterNot { it.id in back }.forEach { edge -> ranks[edge.targetNodeId] = max(ranks.getValue(edge.targetNodeId), ranks.getValue(edge.sourceNodeId) + 1) }
+            rankingEdges.filterNot { it.id in back }.forEach { edge -> ranks[edge.targetNodeId] = max(ranks.getValue(edge.targetNodeId), ranks.getValue(edge.sourceNodeId) + 1) }
         }
         return Classified(ranks, back)
     }
@@ -96,11 +99,36 @@ public object FlowLayoutEngine {
     }
 
     private fun crossingOrder(ids: List<FlowNodeId>, edges: List<FlowGraphEdge>, ranks: Map<FlowNodeId, Int>, sweeps: Int): List<FlowNodeId> {
-        var ordered = ids.sortedBy { it.value }
+        var ordered = ids.sortedWith(compareBy<FlowNodeId> { branchOrder(it, edges) }.thenBy { it.value })
         repeat(sweeps) {
-            ordered = ordered.sortedWith(compareBy<FlowNodeId> { id -> edges.filter { it.targetNodeId == id }.mapNotNull { ranks[it.sourceNodeId] }.average().takeUnless(Double::isNaN) ?: -1.0 }.thenBy { it.value })
+            ordered = ordered.sortedWith(
+                compareBy<FlowNodeId> { branchOrder(it, edges) }
+                    .thenBy { id -> edges.filter { it.targetNodeId == id }.mapNotNull { ranks[it.sourceNodeId] }.average().takeUnless(Double::isNaN) ?: -1.0 }
+                    .thenBy { it.value }
+            )
         }
         return ordered
+    }
+
+    private fun branchOrder(id: FlowNodeId, edges: List<FlowGraphEdge>): Int =
+        edges
+            .filter { it.targetNodeId == id }
+            .minOfOrNull { edgeKindOrder(it.kind) }
+            ?: 40
+
+    private fun edgeKindOrder(kind: FlowEdgeKind): Int = when (kind) {
+        FlowEdgeKind.TRUE_BRANCH,
+        FlowEdgeKind.LOOP_BODY,
+        -> 10
+        FlowEdgeKind.ELSE_IF_BRANCH -> 20
+        FlowEdgeKind.FALSE_BRANCH,
+        FlowEdgeKind.LOOP_EXIT,
+        -> 30
+        FlowEdgeKind.CONDITION,
+        FlowEdgeKind.DATA_FLOW,
+        -> 35
+        FlowEdgeKind.SEQUENCE -> 40
+        else -> 50
     }
 
     private fun route(edge: FlowGraphEdge, source: FlowRect, target: FlowRect, obstacles: Collection<FlowRect>, ranks: Map<FlowNodeId, Int>, backEdges: Set<FlowEdgeId>, config: FlowLayoutConfig, view: FlowViewDocument?): FlowRoute {

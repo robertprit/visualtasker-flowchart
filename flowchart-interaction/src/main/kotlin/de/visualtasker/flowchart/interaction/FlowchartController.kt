@@ -61,6 +61,22 @@ public class FlowchartController(
         return result
     }
 
+    public fun replaceViewport(viewport: FlowViewport): FlowViewDocument? {
+        require(viewport.zoom.isFinite() && viewport.zoom > 0.0)
+        require(viewport.pan.x.isFinite() && viewport.pan.y.isFinite())
+        val callback: ((FlowViewDocument) -> Unit)?
+        val view: FlowViewDocument
+        synchronized(lock) {
+            if (state.closed) return null
+            val current = state.view ?: return null
+            view = current.copy(viewport = viewport)
+            state = state.copy(view = view)
+            callback = viewListener
+        }
+        callback?.invoke(view)
+        return view
+    }
+
     public fun replaceLayout(config: FlowLayoutConfig = layoutConfig): FlowViewDocument? {
         val graph = synchronized(lock) { if (state.closed) return null else state.graph } ?: return null
         val layout = FlowLayoutEngine.layout(graph, nodeMetrics, config, state.view)

@@ -4,7 +4,7 @@ package de.visualtasker.flowchart.interaction
 import de.visualtasker.flowchart.domain.*
 
 public enum class FlowActiveTool { SELECT, PAN, MARQUEE }
-public enum class FlowMovementMode { SINGLE, CONNECTED_BFS }
+public enum class FlowMovementMode { SINGLE, NEXT_FOLLOW_FIRST, CONNECTED_BFS }
 
 public data class FlowNodeDragState(public val anchor: FlowPoint, public val latest: FlowPoint, public val nodeIds: Set<FlowNodeId>, public val originalPositions: Map<FlowNodeId, FlowPoint>)
 public data class FlowViewportPanState(public val anchor: FlowPoint, public val latest: FlowPoint, public val originalPan: FlowPoint)
@@ -17,7 +17,7 @@ public data class FlowInteractionState(
     public val hoveredNodeId: FlowNodeId? = null,
     public val hoveredEdgeId: FlowEdgeId? = null,
     public val activeTool: FlowActiveTool = FlowActiveTool.SELECT,
-    public val movementMode: FlowMovementMode = FlowMovementMode.SINGLE,
+    public val movementMode: FlowMovementMode = FlowMovementMode.NEXT_FOLLOW_FIRST,
     public val dragState: FlowNodeDragState? = null,
     public val panState: FlowViewportPanState? = null,
     public val marqueeState: FlowMarqueeState? = null,

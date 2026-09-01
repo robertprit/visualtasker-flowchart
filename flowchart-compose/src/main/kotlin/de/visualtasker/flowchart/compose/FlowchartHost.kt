@@ -5,6 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.*
@@ -57,7 +58,9 @@ public fun FlowchartHost(
         FlowCanvas(graphDocument, view, controllerState.runtime, controllerState.interaction, uiConfig, nodeShapeProvider)
         FlowLabelsAndSemantics(graphDocument, view, controllerState, callbacks)
         FlowGestureLayer(graphDocument, view, controller, uiConfig, callbacks) { controllerState = controller.snapshot() }
-        ZoomControls(controller, uiConfig) { controllerState = controller.snapshot() }
+        if (uiConfig.controlsEnabled) {
+            ZoomControls(controller, uiConfig) { controllerState = controller.snapshot() }
+        }
     }
 }
 
@@ -81,19 +84,25 @@ private fun FlowCanvas(
             val end = FlowPoint(target.position.x + targetSize.width / 2, target.position.y)
             val bends = view.edgeViews.firstOrNull { it.edgeId == edge.id }?.bendPoints.orEmpty()
             val points = (listOf(start) + bends + end).map(::screen)
-            val edgeColor = when (flowEdgeVisualCategory(edge.kind)) {
-                FlowchartEdgeVisualCategory.DEFAULT -> config.colorTokens.edge
-                FlowchartEdgeVisualCategory.BRANCH -> config.colorTokens.branchEdge
-                FlowchartEdgeVisualCategory.DATA -> config.colorTokens.dataEdge
-                FlowchartEdgeVisualCategory.LOOP -> config.colorTokens.loopEdge
-                FlowchartEdgeVisualCategory.ERROR -> config.colorTokens.errorEdge
+            val traversed = edge.id in runtime?.traversedEdgeIds.orEmpty()
+            val edgeColor = if (traversed) {
+                config.colorTokens.traversedEdge
+            } else {
+                when (flowEdgeVisualCategory(edge.kind)) {
+                    FlowchartEdgeVisualCategory.DEFAULT -> config.colorTokens.edge
+                    FlowchartEdgeVisualCategory.BRANCH -> config.colorTokens.branchEdge
+                    FlowchartEdgeVisualCategory.DATA -> config.colorTokens.dataEdge
+                    FlowchartEdgeVisualCategory.LOOP -> config.colorTokens.loopEdge
+                    FlowchartEdgeVisualCategory.ERROR -> config.colorTokens.errorEdge
+                }
             }
+            val edgeStrokeWidth = config.shapeTokens.edgeStrokeWidthDp.dp.toPx() * if (traversed) 1.55f else 1f
             points.zipWithNext().forEach { (a, b) ->
                 drawLine(
                     color = edgeColor,
                     start = a,
                     end = b,
-                    strokeWidth = config.shapeTokens.edgeStrokeWidthDp.dp.toPx(),
+                    strokeWidth = edgeStrokeWidth,
                     cap = StrokeCap.Round,
                 )
             }
@@ -123,7 +132,15 @@ private fun FlowCanvas(
             val size = nodeView.size ?: FlowSize(160.0, 72.0); val origin = screen(nodeView.position); val canvasSize = Size((size.width * viewport.zoom).toFloat(), (size.height * viewport.zoom).toFloat())
             val runtimeState = runtime?.nodeStates?.get(node.id)
             val nodeFillColor = flowNodeFillColor(node, config.colorTokens)
-            val stroke = when { node.id in interaction.selectedNodeIds -> config.colorTokens.selectedStroke; runtimeState == FlowRuntimeNodeState.FAILED -> config.colorTokens.failedStroke; runtimeState in setOf(FlowRuntimeNodeState.RUNNING, FlowRuntimeNodeState.WAITING) -> config.colorTokens.runningStroke; else -> config.colorTokens.nodeStroke }
+            val stroke = when {
+                node.id in interaction.selectedNodeIds -> config.colorTokens.selectedStroke
+                runtimeState == FlowRuntimeNodeState.FAILED -> config.colorTokens.failedStroke
+                runtime?.activeNodeId == node.id -> config.colorTokens.runningStroke
+                runtimeState in setOf(FlowRuntimeNodeState.RUNNING, FlowRuntimeNodeState.WAITING) -> config.colorTokens.runningStroke
+                runtimeState == FlowRuntimeNodeState.SUCCEEDED -> config.colorTokens.succeededStroke
+                runtimeState == FlowRuntimeNodeState.SKIPPED -> config.colorTokens.skippedStroke
+                else -> config.colorTokens.nodeStroke
+            }
             val visualPath = resolveNodeShape(nodeShapeProvider, node, canvasSize.width, canvasSize.height)
             if (visualPath != null) {
                 translate(origin.x, origin.y) {
@@ -199,6 +216,7 @@ internal fun flowNodeFillColor(
         blockType.startsWith("control.") -> tokens.controlNodeFill
         blockType.startsWith("logic.") || blockType.startsWith("literal.") -> tokens.logicNodeFill
         blockType.startsWith("variable.") || blockType.startsWith("variables.") -> tokens.variableNodeFill
+        blockType.startsWith("feedback.") -> tokens.feedbackNodeFill
         else -> tokens.nodeFill
     }
 }
@@ -257,6 +275,29 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
     var previousTapAt by remember { mutableLongStateOf(0L) }
     var previousTapPosition by remember { mutableStateOf<Offset?>(null) }
     val modifier = Modifier.fillMaxSize().testTag("flowchart-gestures")
+        .pointerInput(graph, config.panEnabled, config.zoomEnabled) {
+            detectTransformGestures { centroid, pan, zoom, _ ->
+                if (!config.panEnabled && !config.zoomEnabled) return@detectTransformGestures
+                val current = controller.snapshot().view ?: return@detectTransformGestures
+                val old = current.viewport
+                val nextZoom = if (config.zoomEnabled) {
+                    (old.zoom * zoom.toDouble()).coerceIn(0.1, 8.0)
+                } else {
+                    old.zoom
+                }
+                val anchor = FlowPoint(centroid.x.toDouble(), centroid.y.toDouble())
+                val graphAnchor = FlowViewportTransform.screenToGraph(anchor, old)
+                val panX = if (config.zoomEnabled) anchor.x - graphAnchor.x * nextZoom else old.pan.x
+                val panY = if (config.zoomEnabled) anchor.y - graphAnchor.y * nextZoom else old.pan.y
+                val nextPan = if (config.panEnabled) {
+                    FlowPoint(panX + pan.x.toDouble(), panY + pan.y.toDouble())
+                } else {
+                    FlowPoint(panX, panY)
+                }
+                controller.replaceViewport(FlowViewport(nextPan, nextZoom))
+                refresh()
+            }
+        }
         .pointerInput(graph, config) {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)

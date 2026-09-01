@@ -30,6 +30,47 @@ public class InteractionTest {
         assertEquals(view, result.view)
     }
 
+    @Test public fun `next follow first moves only downstream nodes`() {
+        val upstream = FlowGraphNode(FlowNodeId("upstream"), FlowSemanticKind(FlowNodeKind.ACTION), "upstream")
+        val current = FlowGraphNode(FlowNodeId("current"), FlowSemanticKind(FlowNodeKind.ACTION), "current")
+        val next = FlowGraphNode(FlowNodeId("next"), FlowSemanticKind(FlowNodeKind.ACTION), "next")
+        val sibling = FlowGraphNode(FlowNodeId("sibling"), FlowSemanticKind(FlowNodeKind.ACTION), "sibling")
+        val downstreamGraph = graph.copy(
+            nodes = listOf(upstream, current, next, sibling),
+            edges = listOf(
+                FlowGraphEdge(FlowEdgeId("up-current"), upstream.id, current.id, FlowEdgeKind.SEQUENCE),
+                FlowGraphEdge(FlowEdgeId("current-next"), current.id, next.id, FlowEdgeKind.SEQUENCE),
+                FlowGraphEdge(FlowEdgeId("sibling-current"), sibling.id, current.id, FlowEdgeKind.SEQUENCE),
+            ),
+        )
+        val downstreamView = view.copy(
+            nodeViews = listOf(
+                FlowNodeView(upstream.id, FlowPoint(0.0, 0.0), FlowSize(10.0, 10.0)),
+                FlowNodeView(current.id, FlowPoint(20.0, 0.0), FlowSize(10.0, 10.0)),
+                FlowNodeView(next.id, FlowPoint(40.0, 0.0), FlowSize(10.0, 10.0)),
+                FlowNodeView(sibling.id, FlowPoint(60.0, 0.0), FlowSize(10.0, 10.0)),
+            ),
+        )
+
+        var result = FlowInteractionReducer.reduce(
+            FlowInteractionState(movementMode = FlowMovementMode.NEXT_FOLLOW_FIRST),
+            FlowInteractionAction.BeginNodeDrag(current.id, FlowPoint(0.0, 0.0)),
+            downstreamGraph,
+            downstreamView,
+        )
+        result = FlowInteractionReducer.reduce(
+            result.state,
+            FlowInteractionAction.UpdateNodeDrag(FlowPoint(8.0, 4.0)),
+            downstreamGraph,
+            result.view,
+        )
+
+        assertEquals(FlowPoint(0.0, 0.0), result.view.nodeViews[0].position)
+        assertEquals(FlowPoint(28.0, 4.0), result.view.nodeViews[1].position)
+        assertEquals(FlowPoint(48.0, 4.0), result.view.nodeViews[2].position)
+        assertEquals(FlowPoint(60.0, 0.0), result.view.nodeViews[3].position)
+    }
+
     @Test public fun `screen drag delta is converted through viewport zoom and pan`() {
         listOf(0.5, 1.0, 2.0).forEach { zoom ->
             val transformedView = view.copy(viewport = FlowViewport(pan = FlowPoint(75.0, -30.0), zoom = zoom))

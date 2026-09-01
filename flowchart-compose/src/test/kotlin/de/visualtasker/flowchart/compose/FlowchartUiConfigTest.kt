@@ -124,9 +124,16 @@ public class FlowchartUiConfigTest {
             label = "Var",
             properties = mapOf("blockType" to FlowSemanticValue.StringValue("variable.reporter.v1")),
         )
+        val feedbackNode = FlowGraphNode(
+            id = FlowNodeId("feedback"),
+            kind = FlowSemanticKind(FlowNodeKind.ACTION),
+            label = "Feedback",
+            properties = mapOf("blockType" to FlowSemanticValue.StringValue("feedback.beep")),
+        )
 
         assertEquals(tokens.logicNodeFill, flowNodeFillColor(logicNode, tokens))
         assertEquals(tokens.variableNodeFill, flowNodeFillColor(variableNode, tokens))
+        assertEquals(tokens.feedbackNodeFill, flowNodeFillColor(feedbackNode, tokens))
     }
 
     @Test
