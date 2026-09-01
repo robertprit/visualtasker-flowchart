@@ -17,8 +17,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
@@ -162,10 +164,101 @@ private fun FlowCanvas(
                 drawRoundRect(nodeFillColor, origin, canvasSize, CornerRadius(config.shapeTokens.nodeCornerRadiusDp.dp.toPx()))
                 drawRoundRect(stroke, origin, canvasSize, CornerRadius(config.shapeTokens.nodeCornerRadiusDp.dp.toPx()), style = Stroke(config.shapeTokens.nodeStrokeWidthDp.dp.toPx(), pathEffect = if (node.kind.standard == FlowNodeKind.UNKNOWN_SOURCE || node.kind.extensionId != null) PathEffect.dashPathEffect(floatArrayOf(10f, 6f)) else null))
             }
+            drawNodePorts(
+                node = node,
+                origin = origin,
+                size = canvasSize,
+                config = config,
+            )
             if (config.diagnosticMarkersEnabled && node.diagnosticIds.isNotEmpty()) drawCircle(config.colorTokens.diagnostic, 6.dp.toPx(), Offset(origin.x + canvasSize.width - 10.dp.toPx(), origin.y + 10.dp.toPx()))
         }
     }
 }
+
+internal data class FlowchartNodePort(
+    val name: String,
+    val label: String,
+    val kind: FlowEdgeKind,
+)
+
+internal fun flowNodePorts(
+    node: FlowGraphNode,
+    key: String,
+): List<FlowchartNodePort> {
+    val list = node.properties[key] as? FlowSemanticValue.ListValue ?: return emptyList()
+    return list.values.mapNotNull { value ->
+        val fields = (value as? FlowSemanticValue.ObjectValue)?.values ?: return@mapNotNull null
+        val name = (fields["name"] as? FlowSemanticValue.StringValue)?.value ?: return@mapNotNull null
+        val kindName = (fields["kind"] as? FlowSemanticValue.StringValue)?.value ?: return@mapNotNull null
+        val kind = FlowEdgeKind.entries.firstOrNull { it.name == kindName } ?: return@mapNotNull null
+        val label = (fields["label"] as? FlowSemanticValue.StringValue)?.value ?: name
+        FlowchartNodePort(name = name, label = label, kind = kind)
+    }
+}
+
+private fun DrawScope.drawNodePorts(
+    node: FlowGraphNode,
+    origin: Offset,
+    size: Size,
+    config: FlowchartUiConfig,
+) {
+    val inputPorts = flowNodePorts(node, "inputPorts")
+    val outputPorts = flowNodePorts(node, "outputPorts")
+    drawPortStack(
+        ports = inputPorts,
+        origin = origin,
+        size = size,
+        inputSide = true,
+        config = config,
+    )
+    drawPortStack(
+        ports = outputPorts,
+        origin = origin,
+        size = size,
+        inputSide = false,
+        config = config,
+    )
+}
+
+private fun DrawScope.drawPortStack(
+    ports: List<FlowchartNodePort>,
+    origin: Offset,
+    size: Size,
+    inputSide: Boolean,
+    config: FlowchartUiConfig,
+) {
+    if (ports.isEmpty()) return
+    val portWidth = 18.dp.toPx().coerceAtMost(size.width * 0.22f)
+    val portHeight = 8.dp.toPx()
+    val gap = size.height / (ports.size + 1)
+    val x = if (inputSide) origin.x - portWidth * 0.45f else origin.x + size.width - portWidth * 0.55f
+    ports.forEachIndexed { index, port ->
+        val y = origin.y + gap * (index + 1) - portHeight / 2f
+        val color = portColor(port.kind, config.colorTokens)
+        drawRoundRect(
+            color = color.copy(alpha = 0.92f),
+            topLeft = Offset(x, y),
+            size = Size(portWidth, portHeight),
+            cornerRadius = CornerRadius(portHeight / 2f, portHeight / 2f),
+        )
+        drawRoundRect(
+            color = Color.White.copy(alpha = 0.64f),
+            topLeft = Offset(x, y),
+            size = Size(portWidth, portHeight),
+            cornerRadius = CornerRadius(portHeight / 2f, portHeight / 2f),
+            style = Stroke(1.dp.toPx()),
+        )
+    }
+}
+
+private fun portColor(kind: FlowEdgeKind, tokens: FlowchartColorTokens): Color =
+    when (flowEdgeVisualCategory(kind)) {
+        FlowchartEdgeVisualCategory.DEFAULT -> tokens.edge
+        FlowchartEdgeVisualCategory.BRANCH -> tokens.branchEdge
+        FlowchartEdgeVisualCategory.DATA -> tokens.dataEdge
+        FlowchartEdgeVisualCategory.LOOP -> tokens.loopEdge
+        FlowchartEdgeVisualCategory.ERROR -> tokens.errorEdge
+    }
 
 internal fun resolveNodeShape(
     provider: FlowchartNodeShapeProvider?,

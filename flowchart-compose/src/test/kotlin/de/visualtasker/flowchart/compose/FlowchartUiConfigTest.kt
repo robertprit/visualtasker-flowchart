@@ -137,6 +137,46 @@ public class FlowchartUiConfigTest {
     }
 
     @Test
+    public fun `node ports are parsed from presentation metadata`() {
+        val node = FlowGraphNode(
+            id = FlowNodeId("if"),
+            kind = FlowSemanticKind(FlowNodeKind.DECISION),
+            label = "IF",
+            properties = mapOf(
+                "inputPorts" to FlowSemanticValue.ListValue(
+                    listOf(
+                        FlowSemanticValue.ObjectValue(
+                            mapOf(
+                                "name" to FlowSemanticValue.StringValue("CONDITION"),
+                                "label" to FlowSemanticValue.StringValue("Condition"),
+                                "kind" to FlowSemanticValue.StringValue(FlowEdgeKind.CONDITION.name),
+                            )
+                        )
+                    )
+                ),
+                "outputPorts" to FlowSemanticValue.ListValue(
+                    listOf(
+                        FlowSemanticValue.ObjectValue(
+                            mapOf(
+                                "name" to FlowSemanticValue.StringValue("THEN"),
+                                "label" to FlowSemanticValue.StringValue("then"),
+                                "kind" to FlowSemanticValue.StringValue(FlowEdgeKind.TRUE_BRANCH.name),
+                            )
+                        )
+                    )
+                ),
+            ),
+        )
+
+        val inputs = flowNodePorts(node, "inputPorts")
+        val outputs = flowNodePorts(node, "outputPorts")
+
+        assertEquals(listOf(FlowchartNodePort("CONDITION", "Condition", FlowEdgeKind.CONDITION)), inputs)
+        assertEquals(listOf(FlowchartNodePort("THEN", "then", FlowEdgeKind.TRUE_BRANCH)), outputs)
+        assertTrue(flowNodePorts(node, "missingPorts").isEmpty())
+    }
+
+    @Test
     public fun `connector remains at routed source for forward loop and reverse paths`() {
         listOf(
             listOf(Offset(0f, 0f), Offset(40f, 0f)),
