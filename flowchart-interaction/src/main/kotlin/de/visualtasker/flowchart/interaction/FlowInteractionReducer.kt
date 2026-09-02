@@ -18,6 +18,7 @@ public object FlowInteractionReducer {
         is FlowInteractionAction.BeginViewportPan -> result(state.copy(panState = FlowViewportPanState(action.at, action.at, view.viewport.pan)), view)
         is FlowInteractionAction.UpdateViewportPan -> updatePan(state, action, view)
         FlowInteractionAction.CommitViewportPan -> commitPan(state, view)
+        FlowInteractionAction.CancelViewportPan -> cancelPan(state, view)
         is FlowInteractionAction.ZoomViewport -> zoom(state, action, view)
         is FlowInteractionAction.MarqueeSelection -> marquee(state, action, view)
         FlowInteractionAction.UndoViewChange -> undo(state, view)
@@ -65,6 +66,11 @@ public object FlowInteractionReducer {
         val pan = state.panState ?: return result(state, view)
         val original = view.copy(viewport = view.viewport.copy(pan = pan.originalPan))
         return FlowInteractionResult(state.copy(panState = null, undoHistory = state.undoHistory + original, redoHistory = emptyList()), view, true)
+    }
+
+    private fun cancelPan(state: FlowInteractionState, view: FlowViewDocument): FlowInteractionResult {
+        val pan = state.panState ?: return result(state, view)
+        return result(state.copy(panState = null), view.copy(viewport = view.viewport.copy(pan = pan.originalPan)))
     }
 
     private fun zoom(state: FlowInteractionState, action: FlowInteractionAction.ZoomViewport, view: FlowViewDocument): FlowInteractionResult {

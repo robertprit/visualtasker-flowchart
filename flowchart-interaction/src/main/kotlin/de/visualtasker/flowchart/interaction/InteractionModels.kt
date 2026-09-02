@@ -39,6 +39,7 @@ public sealed interface FlowInteractionAction {
     public data class BeginViewportPan(public val at: FlowPoint) : FlowInteractionAction
     public data class UpdateViewportPan(public val at: FlowPoint) : FlowInteractionAction
     public data object CommitViewportPan : FlowInteractionAction
+    public data object CancelViewportPan : FlowInteractionAction
     public data class ZoomViewport(public val factor: Double, public val anchor: FlowPoint) : FlowInteractionAction
     public data class MarqueeSelection(public val rect: FlowRect) : FlowInteractionAction
     public data object UndoViewChange : FlowInteractionAction

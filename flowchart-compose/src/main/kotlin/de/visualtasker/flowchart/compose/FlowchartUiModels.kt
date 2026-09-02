@@ -94,6 +94,8 @@ public data class FlowchartHostCallbacks(
     public val onNodeSelected: (FlowNodeId?) -> Unit = {},
     public val onEdgeSelected: (FlowEdgeId?) -> Unit = {},
     public val onPortConnectionRequested: (FlowchartNodePortRef, FlowchartNodePortRef) -> Unit = { _, _ -> },
+    public val onNodeDragChanged: (FlowNodeId?, FlowPoint?) -> Unit = { _, _ -> },
+    public val onNodeDragFinished: (FlowNodeId, FlowPoint) -> Unit = { _, _ -> },
     public val onNodeInvoked: (FlowNodeId) -> Unit = {},
     public val onDiagnosticSelected: (FlowDiagnosticId) -> Unit = {},
     public val onRunRequested: (() -> Unit)? = null,

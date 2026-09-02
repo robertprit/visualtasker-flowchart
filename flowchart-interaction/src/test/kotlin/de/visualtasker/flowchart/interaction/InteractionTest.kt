@@ -121,6 +121,27 @@ public class InteractionTest {
         controller.close()
     }
 
+    @Test public fun `controller cancels transient drag and pan state`() {
+        val controller = FlowchartController(FlowSurfaceId("s"))
+        controller.attachGraph(graph, view)
+
+        controller.dispatch(FlowInteractionAction.BeginNodeDrag(nodes[0].id, FlowPoint(0.0, 0.0)))
+        controller.dispatch(FlowInteractionAction.UpdateNodeDrag(FlowPoint(12.0, 6.0)))
+        controller.cancelTransientInteraction()
+
+        assertNull(controller.snapshot().interaction.dragState)
+        assertEquals(view.nodeViews[0].position, controller.snapshot().view!!.nodeViews[0].position)
+
+        controller.dispatch(FlowInteractionAction.BeginViewportPan(FlowPoint(0.0, 0.0)))
+        controller.dispatch(FlowInteractionAction.UpdateViewportPan(FlowPoint(20.0, 10.0)))
+        controller.cancelTransientInteraction()
+
+        assertNull(controller.snapshot().interaction.panState)
+        assertEquals(view.viewport, controller.snapshot().view!!.viewport)
+
+        controller.close()
+    }
+
     @Test public fun `stale runtime snapshot is rejected`() {
         val controller = FlowchartController(FlowSurfaceId("s")); controller.attachGraph(graph, view)
         fun runtime(sequence: Long) = FlowRuntimeSnapshot(runId = FlowRunId("r"), sourceSessionId = FlowSourceSessionId("s"), documentId = graph.documentId, documentRevision = graph.documentRevision, sequence = sequence, capturedAtEpochMs = 1)

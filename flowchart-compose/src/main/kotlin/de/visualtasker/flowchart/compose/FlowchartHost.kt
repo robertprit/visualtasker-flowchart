@@ -341,7 +341,8 @@ private fun hitNodePort(
     portHeightPx: Float,
 ): FlowchartNodePortHit? =
     flowNodePortHits(graph, view, portWidthPx, portHeightPx)
-        .lastOrNull { hit -> hit.bounds.contains(offset) }
+        .filter { hit -> hit.bounds.inflate(14f).contains(offset) }
+        .minByOrNull { hit -> (hit.bounds.center - offset).getDistance() }
 
 private fun DrawScope.drawPortStack(
     ports: List<FlowchartNodePort>,
@@ -351,8 +352,8 @@ private fun DrawScope.drawPortStack(
     config: FlowchartUiConfig,
 ) {
     if (ports.isEmpty()) return
-    val portWidth = 18.dp.toPx().coerceAtMost(size.width * 0.22f)
-    val portHeight = 8.dp.toPx()
+    val portWidth = 28.dp.toPx().coerceAtMost(size.width * 0.34f)
+    val portHeight = 12.dp.toPx()
     val gap = size.height / (ports.size + 1)
     val x = if (inputSide) origin.x - portWidth * 0.45f else origin.x + size.width - portWidth * 0.55f
     ports.forEachIndexed { index, port ->
@@ -493,8 +494,8 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
     var panning by remember { mutableStateOf(false) }
     val currentView by rememberUpdatedState(view)
     val density = LocalDensity.current
-    val portWidthPx = with(density) { 18.dp.toPx() }
-    val portHeightPx = with(density) { 8.dp.toPx() }
+    val portWidthPx = with(density) { 34.dp.toPx() }
+    val portHeightPx = with(density) { 20.dp.toPx() }
     var previousTapAt by remember { mutableLongStateOf(0L) }
     var previousTapPosition by remember { mutableStateOf<Offset?>(null) }
     val modifier = Modifier.fillMaxSize().testTag("flowchart-gestures")
@@ -538,6 +539,7 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
                         callbacks.onEdgeSelected(null)
                     } else if (dragNode != null) {
                         controller.dispatch(FlowInteractionAction.BeginNodeDrag(dragNode!!, FlowPoint(down.position.x.toDouble(), down.position.y.toDouble())))
+                        callbacks.onNodeDragChanged(dragNode, FlowPoint(down.position.x.toDouble(), down.position.y.toDouble()))
                     } else if (config.panEnabled) {
                         panning = true
                         controller.dispatch(FlowInteractionAction.BeginViewportPan(FlowPoint(down.position.x.toDouble(), down.position.y.toDouble())))
@@ -551,7 +553,10 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
                             dragPortPointer = change.position
                             dragPortTarget = hitNodePort(change.position, graph, currentView, portWidthPx, portHeightPx)
                                 ?.takeIf { hit -> hit.ref.isCompatibleTargetFor(dragPort!!) }
-                        } else if (dragNode != null) controller.dispatch(FlowInteractionAction.UpdateNodeDrag(point))
+                        } else if (dragNode != null) {
+                            controller.dispatch(FlowInteractionAction.UpdateNodeDrag(point))
+                            callbacks.onNodeDragChanged(dragNode, point)
+                        }
                         else if (panning) controller.dispatch(FlowInteractionAction.UpdateViewportPan(point))
                         refresh()
                     }
@@ -564,11 +569,16 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
                             if (targetPort != null) {
                                 callbacks.onPortConnectionRequested(sourcePort, targetPort)
                             }
-                        } else if (dragNode != null) controller.dispatch(FlowInteractionAction.CommitNodeDrag)
+                        } else if (dragNode != null) {
+                            val finish = FlowPoint(latestDragPosition.x.toDouble(), latestDragPosition.y.toDouble())
+                            controller.dispatch(FlowInteractionAction.CommitNodeDrag)
+                            callbacks.onNodeDragFinished(dragNode!!, finish)
+                        }
                         else if (panning) controller.dispatch(FlowInteractionAction.CommitViewportPan)
                     } else if (dragNode != null) {
                         controller.dispatch(FlowInteractionAction.CancelNodeDrag)
                     }
+                    callbacks.onNodeDragChanged(null, null)
                     dragNode = null
                     dragPort = null
                     dragPortAnchor = null

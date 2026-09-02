@@ -103,6 +103,34 @@ public class FlowchartController(
         return newView
     }
 
+    public fun cancelTransientInteraction() {
+        synchronized(lock) {
+            if (state.closed) return
+            val view = state.view
+            val drag = state.interaction.dragState
+            val pan = state.interaction.panState
+            val restoredView = when {
+                view == null -> null
+                drag != null -> view.copy(
+                    nodeViews = view.nodeViews.map { node ->
+                        drag.originalPositions[node.nodeId]?.let { node.copy(position = it) } ?: node
+                    }
+                )
+                pan != null -> view.copy(viewport = view.viewport.copy(pan = pan.originalPan))
+                else -> view
+            }
+            state = state.copy(
+                view = restoredView,
+                interaction = state.interaction.copy(
+                    dragState = null,
+                    panState = null,
+                    marqueeState = null,
+                    temporaryRoutePreview = null,
+                )
+            )
+        }
+    }
+
     private fun layoutView(graph: FlowGraphDocument): FlowViewDocument {
         val layout = FlowLayoutEngine.layout(graph, nodeMetrics, layoutConfig)
         return FlowViewDocument(documentId = graph.documentId, compatibleDocumentRevision = graph.documentRevision, surfaceId = surfaceId, nodeViews = graph.visibleLayoutNodes().map { node -> val bounds = layout.nodeBounds[node.id] ?: FlowRect(FlowPoint(0.0, 0.0), nodeMetrics.defaultSize); FlowNodeView(node.id, bounds.origin, bounds.size) }, edgeViews = layout.routes.values.map { route -> FlowEdgeView(route.edgeId, route.points.drop(1).dropLast(1).map { it.asPoint() }) }, layoutMetadata = FlowLayoutMetadata("hierarchical", "1", layoutConfig.deterministicSeed))
