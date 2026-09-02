@@ -489,6 +489,7 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
     var dragPort by remember { mutableStateOf<FlowchartNodePortRef?>(null) }
     var dragPortAnchor by remember { mutableStateOf<Offset?>(null) }
     var dragPortPointer by remember { mutableStateOf<Offset?>(null) }
+    var dragPortTarget by remember { mutableStateOf<FlowchartNodePortHit?>(null) }
     var panning by remember { mutableStateOf(false) }
     val currentView by rememberUpdatedState(view)
     val density = LocalDensity.current
@@ -546,8 +547,11 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
                         latestDragPosition = change.position
                         if (change.positionChange() != Offset.Zero) change.consume()
                         val point = FlowPoint(change.position.x.toDouble(), change.position.y.toDouble())
-                        if (dragPort != null) dragPortPointer = change.position
-                        else if (dragNode != null) controller.dispatch(FlowInteractionAction.UpdateNodeDrag(point))
+                        if (dragPort != null) {
+                            dragPortPointer = change.position
+                            dragPortTarget = hitNodePort(change.position, graph, currentView, portWidthPx, portHeightPx)
+                                ?.takeIf { hit -> hit.ref.isCompatibleTargetFor(dragPort!!) }
+                        } else if (dragNode != null) controller.dispatch(FlowInteractionAction.UpdateNodeDrag(point))
                         else if (panning) controller.dispatch(FlowInteractionAction.UpdateViewportPan(point))
                         refresh()
                     }
@@ -556,7 +560,7 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
                         if (sourcePort != null) {
                             val targetPort = hitNodePort(latestDragPosition, graph, currentView, portWidthPx, portHeightPx)
                                 ?.ref
-                                ?.takeIf { it.inputSide && it.nodeId != sourcePort.nodeId }
+                                ?.takeIf { it.isCompatibleTargetFor(sourcePort) }
                             if (targetPort != null) {
                                 callbacks.onPortConnectionRequested(sourcePort, targetPort)
                             }
@@ -569,6 +573,7 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
                     dragPort = null
                     dragPortAnchor = null
                     dragPortPointer = null
+                    dragPortTarget = null
                     panning = false
                     refresh()
                 } else if (config.selectionEnabled) {
@@ -600,18 +605,75 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
         if (anchor != null && pointer != null && sourcePort != null) {
             Canvas(Modifier.fillMaxSize()) {
                 val color = portColor(sourcePort.kind, config.colorTokens)
-                drawLine(
-                    color = color.copy(alpha = 0.86f),
-                    start = anchor,
-                    end = pointer,
-                    strokeWidth = 2.dp.toPx(),
-                    cap = StrokeCap.Round,
-                )
+                val route = portDragPreviewRoute(anchor, dragPortTarget?.bounds?.center ?: pointer)
+                route.zipWithNext().forEach { (from, to) ->
+                    drawLine(
+                        color = color.copy(alpha = 0.86f),
+                        start = from,
+                        end = to,
+                        strokeWidth = 2.dp.toPx(),
+                        cap = StrokeCap.Round,
+                    )
+                }
                 drawCircle(color.copy(alpha = 0.96f), radius = 4.dp.toPx(), center = anchor)
-                drawCircle(color.copy(alpha = 0.72f), radius = 5.dp.toPx(), center = pointer)
+                dragPortTarget?.bounds?.let { target ->
+                    drawRoundRect(
+                        color = color.copy(alpha = 0.24f),
+                        topLeft = target.topLeft,
+                        size = target.size,
+                        cornerRadius = CornerRadius(target.height / 2f, target.height / 2f),
+                    )
+                    drawRoundRect(
+                        color = color.copy(alpha = 0.92f),
+                        topLeft = target.topLeft,
+                        size = target.size,
+                        cornerRadius = CornerRadius(target.height / 2f, target.height / 2f),
+                        style = Stroke(2.dp.toPx()),
+                    )
+                } ?: drawCircle(color.copy(alpha = 0.72f), radius = 5.dp.toPx(), center = pointer)
             }
         }
     }
+}
+
+internal fun FlowchartNodePortRef.isCompatibleTargetFor(source: FlowchartNodePortRef): Boolean =
+    inputSide &&
+        !source.inputSide &&
+        nodeId != source.nodeId &&
+        kind == source.kind
+
+internal fun portDragPreviewRoute(
+    start: Offset,
+    end: Offset,
+): List<Offset> {
+    if (start == end) return listOf(start)
+    val midX = (start.x + end.x) / 2f
+    return listOf(
+        start,
+        Offset(midX, start.y),
+        Offset(midX, end.y),
+        end,
+    ).compactOffsets()
+}
+
+private fun List<Offset>.compactOffsets(): List<Offset> =
+    fold(emptyList<Offset>()) { acc, point ->
+        if (acc.lastOrNull() == point) acc else acc + point
+    }.removeCollinearOffsets()
+
+private fun List<Offset>.removeCollinearOffsets(): List<Offset> {
+    if (size <= 2) return this
+    val result = mutableListOf(first())
+    for (index in 1 until lastIndex) {
+        val previous = result.last()
+        val current = this[index]
+        val next = this[index + 1]
+        val horizontal = previous.y == current.y && current.y == next.y
+        val vertical = previous.x == current.x && current.x == next.x
+        if (!horizontal && !vertical) result += current
+    }
+    result += last()
+    return result
 }
 
 @Composable private fun ZoomControls(controller: FlowchartController, config: FlowchartUiConfig, refresh: () -> Unit) {

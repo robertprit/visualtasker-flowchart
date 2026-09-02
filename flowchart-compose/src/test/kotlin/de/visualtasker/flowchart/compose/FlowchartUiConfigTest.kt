@@ -105,6 +105,38 @@ public class FlowchartUiConfigTest {
     }
 
     @Test
+    public fun `port drag preview is orthogonal and compact`() {
+        val route = portDragPreviewRoute(Offset(10f, 20f), Offset(90f, 80f))
+
+        assertEquals(listOf(Offset(10f, 20f), Offset(50f, 20f), Offset(50f, 80f), Offset(90f, 80f)), route)
+        assertTrue(route.zipWithNext().all { (from, to) -> from.x == to.x || from.y == to.y })
+    }
+
+    @Test
+    public fun `port targets require output to matching foreign input`() {
+        val source = FlowchartNodePortRef(
+            nodeId = FlowNodeId("source"),
+            portName = "output",
+            kind = FlowEdgeKind.DATA_FLOW,
+            inputSide = false,
+        )
+        val target = FlowchartNodePortRef(
+            nodeId = FlowNodeId("target"),
+            portName = "LEFT",
+            kind = FlowEdgeKind.DATA_FLOW,
+            inputSide = true,
+        )
+        val sameNode = target.copy(nodeId = source.nodeId)
+        val wrongKind = target.copy(kind = FlowEdgeKind.CONDITION)
+        val outputTarget = target.copy(inputSide = false)
+
+        assertTrue(target.isCompatibleTargetFor(source))
+        assertFalse(sameNode.isCompatibleTargetFor(source))
+        assertFalse(wrongKind.isCompatibleTargetFor(source))
+        assertFalse(outputTarget.isCompatibleTargetFor(source))
+    }
+
+    @Test
     public fun `edge visual categories exhaust every supported edge kind`() {
         val categories = FlowEdgeKind.entries.associateWith(::flowEdgeVisualCategory)
 
