@@ -61,6 +61,13 @@ public fun interface FlowchartNodeShapeProvider {
     public fun pathFor(node: FlowGraphNode, width: Float, height: Float): Path?
 }
 
+public data class FlowchartNodePortRef(
+    public val nodeId: FlowNodeId,
+    public val portName: String,
+    public val kind: FlowEdgeKind,
+    public val inputSide: Boolean,
+)
+
 @Immutable
 public data class FlowchartUiConfig(
     public val interactionMode: FlowchartInteractionMode = FlowchartInteractionMode.VIEW_INTERACTION,
@@ -86,6 +93,7 @@ public data class FlowchartHostCallbacks(
     public val onViewDocumentChanged: (FlowViewDocument) -> Unit = {},
     public val onNodeSelected: (FlowNodeId?) -> Unit = {},
     public val onEdgeSelected: (FlowEdgeId?) -> Unit = {},
+    public val onPortConnectionRequested: (FlowchartNodePortRef, FlowchartNodePortRef) -> Unit = { _, _ -> },
     public val onNodeInvoked: (FlowNodeId) -> Unit = {},
     public val onDiagnosticSelected: (FlowDiagnosticId) -> Unit = {},
     public val onRunRequested: (() -> Unit)? = null,

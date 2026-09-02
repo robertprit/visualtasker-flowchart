@@ -4,11 +4,19 @@ package de.visualtasker.flowchart.compose
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import de.visualtasker.flowchart.domain.FlowEdgeKind
+import de.visualtasker.flowchart.domain.FlowDocumentId
+import de.visualtasker.flowchart.domain.FlowDocumentRevision
+import de.visualtasker.flowchart.domain.FlowGraphDocument
 import de.visualtasker.flowchart.domain.FlowGraphNode
 import de.visualtasker.flowchart.domain.FlowNodeId
 import de.visualtasker.flowchart.domain.FlowNodeKind
+import de.visualtasker.flowchart.domain.FlowNodeView
+import de.visualtasker.flowchart.domain.FlowPoint
 import de.visualtasker.flowchart.domain.FlowSemanticKind
 import de.visualtasker.flowchart.domain.FlowSemanticValue
+import de.visualtasker.flowchart.domain.FlowSize
+import de.visualtasker.flowchart.domain.FlowSurfaceId
+import de.visualtasker.flowchart.domain.FlowViewDocument
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -174,6 +182,76 @@ public class FlowchartUiConfigTest {
         assertEquals(listOf(FlowchartNodePort("CONDITION", "Condition", FlowEdgeKind.CONDITION)), inputs)
         assertEquals(listOf(FlowchartNodePort("THEN", "then", FlowEdgeKind.TRUE_BRANCH)), outputs)
         assertTrue(flowNodePorts(node, "missingPorts").isEmpty())
+    }
+
+    @Test
+    public fun `node port hitboxes follow rendered port geometry`() {
+        val source = FlowGraphNode(
+            id = FlowNodeId("source"),
+            kind = FlowSemanticKind(FlowNodeKind.ACTION),
+            label = "Source",
+            properties = mapOf(
+                "outputPorts" to FlowSemanticValue.ListValue(
+                    listOf(
+                        FlowSemanticValue.ObjectValue(
+                            mapOf(
+                                "name" to FlowSemanticValue.StringValue("next"),
+                                "label" to FlowSemanticValue.StringValue("Next"),
+                                "kind" to FlowSemanticValue.StringValue(FlowEdgeKind.SEQUENCE.name),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val target = FlowGraphNode(
+            id = FlowNodeId("target"),
+            kind = FlowSemanticKind(FlowNodeKind.ACTION),
+            label = "Target",
+            properties = mapOf(
+                "inputPorts" to FlowSemanticValue.ListValue(
+                    listOf(
+                        FlowSemanticValue.ObjectValue(
+                            mapOf(
+                                "name" to FlowSemanticValue.StringValue("previous"),
+                                "label" to FlowSemanticValue.StringValue("Previous"),
+                                "kind" to FlowSemanticValue.StringValue(FlowEdgeKind.SEQUENCE.name),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val graph = FlowGraphDocument(
+            documentId = FlowDocumentId("doc"),
+            documentRevision = FlowDocumentRevision("1"),
+            producerId = "test",
+            producerVersion = "1",
+            sourceRevision = "1",
+            sourceHash = "hash",
+            nodes = listOf(source, target),
+        )
+        val view = FlowViewDocument(
+            documentId = graph.documentId,
+            compatibleDocumentRevision = graph.documentRevision,
+            surfaceId = FlowSurfaceId("surface"),
+            nodeViews = listOf(
+                FlowNodeView(source.id, FlowPoint(10.0, 20.0), FlowSize(100.0, 60.0)),
+                FlowNodeView(target.id, FlowPoint(180.0, 20.0), FlowSize(100.0, 60.0)),
+            ),
+        )
+
+        val hits = flowNodePortHits(graph, view, portWidthPx = 18f, portHeightPx = 8f)
+
+        assertEquals(2, hits.size)
+        assertEquals(source.id, hits[0].ref.nodeId)
+        assertEquals("next", hits[0].ref.portName)
+        assertFalse(hits[0].ref.inputSide)
+        assertEquals(target.id, hits[1].ref.nodeId)
+        assertEquals("previous", hits[1].ref.portName)
+        assertTrue(hits[1].ref.inputSide)
+        assertTrue(hits[0].bounds.contains(Offset(105f, 50f)))
+        assertTrue(hits[1].bounds.contains(Offset(176f, 50f)))
     }
 
     @Test

@@ -9,10 +9,10 @@ public enum class FlowPinnedNodePolicy { HONOR_VIEW, IGNORE }
 
 public data class FlowLayoutConfig(
     public val orientation: FlowLayoutOrientation = FlowLayoutOrientation.TOP_TO_BOTTOM,
-    public val layerSpacing: Double = 96.0,
-    public val nodeSpacing: Double = 48.0,
+    public val layerSpacing: Double = 128.0,
+    public val nodeSpacing: Double = 80.0,
     public val componentSpacing: Double = 144.0,
-    public val routingClearance: Double = 16.0,
+    public val routingClearance: Double = 28.0,
     public val crossingReductionSweeps: Int = 4,
     public val deterministicSeed: Long = 0L,
     public val syntheticNodePolicy: FlowSyntheticNodePolicy = FlowSyntheticNodePolicy.INCLUDE,
