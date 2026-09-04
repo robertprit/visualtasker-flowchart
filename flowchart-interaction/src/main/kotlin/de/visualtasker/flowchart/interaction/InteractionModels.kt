@@ -32,7 +32,15 @@ public sealed interface FlowInteractionAction {
     public data class ToggleNodeSelection(public val nodeId: FlowNodeId) : FlowInteractionAction
     public data class SelectEdge(public val edgeId: FlowEdgeId) : FlowInteractionAction
     public data object ClearSelection : FlowInteractionAction
-    public data class BeginNodeDrag(public val nodeId: FlowNodeId, public val at: FlowPoint) : FlowInteractionAction
+    public data class BeginNodeDrag(
+        public val nodeId: FlowNodeId,
+        public val at: FlowPoint,
+        public val movementMode: FlowMovementMode? = null,
+    ) : FlowInteractionAction
+    public data class BeginNodeGroupDrag(
+        public val nodeIds: Set<FlowNodeId>,
+        public val at: FlowPoint,
+    ) : FlowInteractionAction
     public data class UpdateNodeDrag(public val at: FlowPoint) : FlowInteractionAction
     public data object CommitNodeDrag : FlowInteractionAction
     public data object CancelNodeDrag : FlowInteractionAction

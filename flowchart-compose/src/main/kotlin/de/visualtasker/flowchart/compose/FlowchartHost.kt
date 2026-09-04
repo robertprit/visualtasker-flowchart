@@ -1,10 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package de.visualtasker.flowchart.compose
 
+import android.media.AudioManager
+import android.media.ToneGenerator
+import android.view.HapticFeedbackConstants
+import android.view.SoundEffectConstants
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.drag
@@ -25,9 +30,13 @@ import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.hapticfeedback.HapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import de.visualtasker.flowchart.domain.*
 import de.visualtasker.flowchart.interaction.*
 
@@ -57,9 +66,33 @@ public fun FlowchartHost(
         return
     }
     Box(Modifier.fillMaxSize().background(uiConfig.colorTokens.background)) {
-        FlowCanvas(graphDocument, view, controllerState.runtime, controllerState.interaction, uiConfig, nodeShapeProvider)
-        FlowLabelsAndSemantics(graphDocument, view, controllerState, callbacks)
-        FlowGestureLayer(graphDocument, view, controller, uiConfig, callbacks) { controllerState = controller.snapshot() }
+        var collapsedFacetNodeIds by remember(controller, graphDocument.documentRevision) { mutableStateOf<Set<FlowNodeId>>(emptySet()) }
+        var lockedFacetNodeIds by remember(controller, graphDocument.documentRevision) { mutableStateOf<Set<FlowNodeId>>(emptySet()) }
+        FlowCanvas(graphDocument, view, controllerState.runtime, controllerState.interaction, uiConfig, nodeShapeProvider, collapsedFacetNodeIds, lockedFacetNodeIds)
+        FlowLabelsAndSemantics(graphDocument, view, controllerState, callbacks, collapsedFacetNodeIds)
+        FlowGestureLayer(
+            graph = graphDocument,
+            view = view,
+            controller = controller,
+            config = uiConfig,
+            callbacks = callbacks,
+            collapsedFacetNodeIds = collapsedFacetNodeIds,
+            lockedFacetNodeIds = lockedFacetNodeIds,
+            onToggleFacetCollapsed = { facetId ->
+                collapsedFacetNodeIds = if (facetId in collapsedFacetNodeIds) {
+                    collapsedFacetNodeIds - facetId
+                } else {
+                    collapsedFacetNodeIds + facetId
+                }
+            },
+            onToggleFacetLocked = { facetId ->
+                lockedFacetNodeIds = if (facetId in lockedFacetNodeIds) {
+                    lockedFacetNodeIds - facetId
+                } else {
+                    lockedFacetNodeIds + facetId
+                }
+            },
+        ) { controllerState = controller.snapshot() }
         if (uiConfig.controlsEnabled) {
             ZoomControls(controller, uiConfig) { controllerState = controller.snapshot() }
         }
@@ -74,14 +107,23 @@ private fun FlowCanvas(
     interaction: FlowInteractionState,
     config: FlowchartUiConfig,
     nodeShapeProvider: FlowchartNodeShapeProvider?,
+    collapsedFacetNodeIds: Set<FlowNodeId> = emptySet(),
+    lockedFacetNodeIds: Set<FlowNodeId> = emptySet(),
 ) {
     Canvas(Modifier.fillMaxSize().testTag("flowchart-canvas")) {
         val viewport = view.viewport
         fun screen(point: FlowPoint) = Offset((point.x * viewport.zoom + viewport.pan.x).toFloat(), (point.y * viewport.zoom + viewport.pan.y).toFloat())
-        drawBackgroundFacetRegions(graph, view, config, ::screen)
-        graph.edges.sortedBy { it.id.value }.forEach { edge ->
-            val points = edgeGraphPoints(edge, graph, view).map(::screen)
-            if (points.size < 2) return@forEach
+        val collapsedNodeIds = collapsedFacetContentNodeIds(graph, collapsedFacetNodeIds)
+        drawBackgroundFacetRegions(graph, view, config, collapsedFacetNodeIds, lockedFacetNodeIds, ::screen)
+        val edgeRoutes = graph.edges
+            .sortedBy { it.id.value }
+            .filterNot { edge -> edge.sourceNodeId in collapsedNodeIds || edge.targetNodeId in collapsedNodeIds }
+            .mapNotNull { edge ->
+                val points = edgeGraphPoints(edge, graph, view).map(::screen)
+                if (points.size < 2) null else edge to points
+            }
+        edgeRoutes.forEachIndexed { edgeIndex, (edge, points) ->
+            if (points.size < 2) return@forEachIndexed
             val traversed = edge.id in runtime?.traversedEdgeIds.orEmpty()
             val edgeColor = if (traversed) {
                 config.colorTokens.traversedEdge
@@ -95,6 +137,11 @@ private fun FlowCanvas(
                 }
             }
             val edgeStrokeWidth = config.shapeTokens.edgeStrokeWidthDp.dp.toPx() * if (traversed) 1.55f else 1f
+            val bridges = edgeBridgeIntersections(
+                points = points,
+                previousRoutes = edgeRoutes.take(edgeIndex).map { it.second },
+                minDistanceFromEnds = edgeStrokeWidth * 4f,
+            )
             points.zipWithNext().forEach { (a, b) ->
                 drawLine(
                     color = edgeColor,
@@ -102,6 +149,25 @@ private fun FlowCanvas(
                     end = b,
                     strokeWidth = edgeStrokeWidth,
                     cap = StrokeCap.Round,
+                )
+            }
+            bridges.forEach { bridge ->
+                drawCircle(
+                    color = config.colorTokens.background.copy(alpha = 0.96f),
+                    radius = edgeStrokeWidth * 1.95f,
+                    center = bridge.center,
+                )
+                drawArc(
+                    color = edgeColor,
+                    startAngle = bridge.startAngle,
+                    sweepAngle = 180f,
+                    useCenter = false,
+                    topLeft = Offset(
+                        bridge.center.x - edgeStrokeWidth * 2.0f,
+                        bridge.center.y - edgeStrokeWidth * 2.0f,
+                    ),
+                    size = Size(edgeStrokeWidth * 4.0f, edgeStrokeWidth * 4.0f),
+                    style = Stroke(width = edgeStrokeWidth, cap = StrokeCap.Round),
                 )
             }
             val edgePresentation = flowEdgePresentation(
@@ -127,6 +193,7 @@ private fun FlowCanvas(
         }
         graph.nodes.sortedBy { it.id.value }.forEach { node ->
             if (node.isBackgroundFacetNode()) return@forEach
+            if (node.id in collapsedNodeIds) return@forEach
             val nodeView = view.nodeViews.firstOrNull { it.nodeId == node.id } ?: return@forEach
             val size = nodeView.size ?: FlowSize(160.0, 72.0); val origin = screen(nodeView.position); val canvasSize = Size((size.width * viewport.zoom).toFloat(), (size.height * viewport.zoom).toFloat())
             val runtimeState = runtime?.nodeStates?.get(node.id)
@@ -176,52 +243,261 @@ private fun DrawScope.drawBackgroundFacetRegions(
     graph: FlowGraphDocument,
     view: FlowViewDocument,
     config: FlowchartUiConfig,
+    collapsedFacetNodeIds: Set<FlowNodeId>,
+    lockedFacetNodeIds: Set<FlowNodeId>,
     screen: (FlowPoint) -> Offset,
 ) {
-    graph.nodes
-        .filter { it.isBackgroundFacetNode() }
-        .sortedBy { it.id.value }
-        .forEach { facet ->
-            val nodeIds = (facet.properties["nodeIds"] as? FlowSemanticValue.ListValue)
-                ?.values
-                .orEmpty()
-                .mapNotNull { (it as? FlowSemanticValue.StringValue)?.value }
-                .map(::FlowNodeId)
-                .toSet()
-            val rects = view.nodeViews
-                .filter { it.nodeId in nodeIds }
-                .map { FlowRect(it.position, it.size ?: FlowSize(160.0, 72.0)) }
-            if (rects.isEmpty()) return@forEach
-            val padding = 18.dp.toPx()
-            val left = rects.minOf { it.left }
-            val top = rects.minOf { it.top }
-            val right = rects.maxOf { it.right }
-            val bottom = rects.maxOf { it.bottom }
-            val origin = screen(FlowPoint(left, top))
-            val end = screen(FlowPoint(right, bottom))
-            val width = end.x - origin.x
-            val height = end.y - origin.y
-            val kind = (facet.properties["facetKind"] as? FlowSemanticValue.StringValue)?.value.orEmpty()
+    flowFacetRegions(graph, view, screen)
+        .forEach { region ->
+            val kind = (region.facet.properties["facetKind"] as? FlowSemanticValue.StringValue)?.value.orEmpty()
             val color = when (kind) {
                 "VARIABLE_BULK" -> config.colorTokens.variableNodeFill
                 "COLLAPSE_GROUP" -> config.colorTokens.feedbackNodeFill
                 else -> config.colorTokens.branchEdge
             }
             drawRoundRect(
-                color = color.copy(alpha = 0.07f),
-                topLeft = Offset(origin.x - padding, origin.y - padding),
-                size = Size(width + padding * 2f, height + padding * 2f),
+                color = color.copy(alpha = if (region.facet.id in collapsedFacetNodeIds) 0.13f else 0.07f),
+                topLeft = region.bounds.topLeft,
+                size = region.bounds.size,
                 cornerRadius = CornerRadius(14.dp.toPx(), 14.dp.toPx()),
             )
             drawRoundRect(
-                color = color.copy(alpha = 0.36f),
-                topLeft = Offset(origin.x - padding, origin.y - padding),
-                size = Size(width + padding * 2f, height + padding * 2f),
+                color = color.copy(alpha = if (region.facet.id in collapsedFacetNodeIds) 0.52f else 0.36f),
+                topLeft = region.bounds.topLeft,
+                size = region.bounds.size,
                 cornerRadius = CornerRadius(14.dp.toPx(), 14.dp.toPx()),
                 style = Stroke(1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 8f))),
             )
+            drawFacetHandle(
+                bounds = region.handleBounds,
+                color = color,
+                locked = region.facet.id in lockedFacetNodeIds,
+                collapsed = region.facet.id in collapsedFacetNodeIds,
+            )
         }
 }
+
+internal data class FlowFacetRegion(
+    val facet: FlowGraphNode,
+    val nodeIds: Set<FlowNodeId>,
+    val bounds: androidx.compose.ui.geometry.Rect,
+    val handleBounds: androidx.compose.ui.geometry.Rect,
+    val gripBounds: androidx.compose.ui.geometry.Rect,
+    val collapseBounds: androidx.compose.ui.geometry.Rect,
+    val lockBounds: androidx.compose.ui.geometry.Rect,
+)
+
+internal enum class FlowFacetHandleAction {
+    Drag,
+    ToggleCollapse,
+    ToggleLock,
+}
+
+internal data class FlowFacetHandleHit(
+    val region: FlowFacetRegion,
+    val action: FlowFacetHandleAction,
+)
+
+internal fun flowFacetRegions(
+    graph: FlowGraphDocument,
+    view: FlowViewDocument,
+    screen: (FlowPoint) -> Offset,
+): List<FlowFacetRegion> =
+    graph.nodes
+        .filter { it.isBackgroundFacetNode() }
+        .sortedBy { it.id.value }
+        .mapNotNull { facet ->
+            val nodeIds = facet.facetContentNodeIds()
+            val rects = view.nodeViews
+                .filter { it.nodeId in nodeIds }
+                .map { FlowRect(it.position, it.size ?: FlowSize(160.0, 72.0)) }
+            if (rects.isEmpty()) return@mapNotNull null
+            val padding = 18f
+            val handleWidth = 72f
+            val handleHeight = 24f
+            val handleGap = 6f
+            val origin = screen(FlowPoint(rects.minOf { it.left }, rects.minOf { it.top }))
+            val end = screen(FlowPoint(rects.maxOf { it.right }, rects.maxOf { it.bottom }))
+            val bounds = androidx.compose.ui.geometry.Rect(
+                left = origin.x - padding,
+                top = origin.y - padding,
+                right = end.x + padding,
+                bottom = end.y + padding,
+            )
+            val handleLeft = bounds.left + 8f
+            val handleTop = bounds.top - handleHeight - handleGap
+            val handleBounds = androidx.compose.ui.geometry.Rect(
+                left = handleLeft,
+                top = handleTop,
+                right = handleLeft + handleWidth,
+                bottom = handleTop + handleHeight,
+            )
+            FlowFacetRegion(
+                facet = facet,
+                nodeIds = nodeIds,
+                bounds = bounds,
+                handleBounds = handleBounds,
+                gripBounds = androidx.compose.ui.geometry.Rect(handleBounds.left, handleBounds.top, handleBounds.left + 30f, handleBounds.bottom),
+                collapseBounds = androidx.compose.ui.geometry.Rect(handleBounds.left + 30f, handleBounds.top, handleBounds.left + 50f, handleBounds.bottom),
+                lockBounds = androidx.compose.ui.geometry.Rect(handleBounds.left + 50f, handleBounds.top, handleBounds.right, handleBounds.bottom),
+            )
+        }
+
+internal fun hitFlowFacetHandle(
+    offset: Offset,
+    graph: FlowGraphDocument,
+    view: FlowViewDocument,
+): FlowFacetHandleHit? {
+    fun screen(point: FlowPoint) = FlowViewportTransform.graphToScreen(point, view.viewport)
+        .let { Offset(it.x.toFloat(), it.y.toFloat()) }
+    return flowFacetRegions(graph, view, ::screen)
+        .asReversed()
+        .firstNotNullOfOrNull { region ->
+            when {
+                region.gripBounds.contains(offset) -> FlowFacetHandleHit(region, FlowFacetHandleAction.Drag)
+                region.collapseBounds.contains(offset) -> FlowFacetHandleHit(region, FlowFacetHandleAction.ToggleCollapse)
+                region.lockBounds.contains(offset) -> FlowFacetHandleHit(region, FlowFacetHandleAction.ToggleLock)
+                else -> null
+            }
+        }
+}
+
+internal data class EdgeBridge(
+    val center: Offset,
+    val startAngle: Float,
+)
+
+internal fun edgeBridgeIntersections(
+    points: List<Offset>,
+    previousRoutes: List<List<Offset>>,
+    minDistanceFromEnds: Float,
+): List<EdgeBridge> =
+    buildList {
+        points.zipWithNext().forEach { segment ->
+            val bridge = segmentBridgeAgainstRoutes(segment.first, segment.second, previousRoutes, minDistanceFromEnds)
+            addAll(bridge)
+        }
+    }.distinctBy { "${it.center.x.toInt()}:${it.center.y.toInt()}:${it.startAngle.toInt()}" }
+
+private fun segmentBridgeAgainstRoutes(
+    a: Offset,
+    b: Offset,
+    routes: List<List<Offset>>,
+    minDistanceFromEnds: Float,
+): List<EdgeBridge> {
+    val horizontal = a.y == b.y && a.x != b.x
+    val vertical = a.x == b.x && a.y != b.y
+    if (!horizontal && !vertical) return emptyList()
+    return routes
+        .flatMap { it.zipWithNext() }
+        .mapNotNull { (c, d) ->
+            val otherHorizontal = c.y == d.y && c.x != d.x
+            val otherVertical = c.x == d.x && c.y != d.y
+            when {
+                horizontal && otherVertical -> crossing(a, b, c, d)?.let { EdgeBridge(it, 0f) }
+                vertical && otherHorizontal -> crossing(c, d, a, b)?.let { EdgeBridge(it, 90f) }
+                else -> null
+            }
+        }
+        .filter { bridge ->
+            distanceAlongSegment(a, b, bridge.center) >= minDistanceFromEnds &&
+                distanceAlongSegment(a, b, bridge.center) <= segmentLength(a, b) - minDistanceFromEnds
+        }
+}
+
+private fun crossing(horizontalStart: Offset, horizontalEnd: Offset, verticalStart: Offset, verticalEnd: Offset): Offset? {
+    val minX = minOf(horizontalStart.x, horizontalEnd.x)
+    val maxX = maxOf(horizontalStart.x, horizontalEnd.x)
+    val minY = minOf(verticalStart.y, verticalEnd.y)
+    val maxY = maxOf(verticalStart.y, verticalEnd.y)
+    val x = verticalStart.x
+    val y = horizontalStart.y
+    return if (x in minX..maxX && y in minY..maxY) Offset(x, y) else null
+}
+
+private fun segmentLength(a: Offset, b: Offset): Float =
+    kotlin.math.abs(a.x - b.x) + kotlin.math.abs(a.y - b.y)
+
+private fun distanceAlongSegment(start: Offset, end: Offset, point: Offset): Float =
+    if (start.x == end.x) kotlin.math.abs(point.y - start.y) else kotlin.math.abs(point.x - start.x)
+
+private fun DrawScope.drawFacetHandle(
+    bounds: androidx.compose.ui.geometry.Rect,
+    color: Color,
+    locked: Boolean,
+    collapsed: Boolean,
+) {
+    val icon = 5.dp.toPx()
+    val handleHeight = bounds.height
+    drawRoundRect(
+        color = color.copy(alpha = 0.28f),
+        topLeft = bounds.topLeft,
+        size = bounds.size,
+        cornerRadius = CornerRadius(handleHeight / 2f, handleHeight / 2f),
+    )
+    repeat(3) { index ->
+        val y = bounds.top + 7.dp.toPx() + index * 4.dp.toPx()
+        drawLine(
+            color = Color.White.copy(alpha = 0.82f),
+            start = Offset(bounds.left + 8.dp.toPx(), y),
+            end = Offset(bounds.left + 23.dp.toPx(), y),
+            strokeWidth = 1.5.dp.toPx(),
+            cap = StrokeCap.Round,
+        )
+    }
+    val chevronX = bounds.left + 39.dp.toPx()
+    val chevronY = bounds.top + handleHeight / 2f
+    val chevronDirection = if (collapsed) -1f else 1f
+    drawLine(
+        color = Color.White.copy(alpha = 0.86f),
+        start = Offset(chevronX - icon, chevronY - icon * chevronDirection),
+        end = Offset(chevronX, chevronY + icon * chevronDirection),
+        strokeWidth = 1.7.dp.toPx(),
+        cap = StrokeCap.Round,
+    )
+    drawLine(
+        color = Color.White.copy(alpha = 0.86f),
+        start = Offset(chevronX + icon, chevronY - icon * chevronDirection),
+        end = Offset(chevronX, chevronY + icon * chevronDirection),
+        strokeWidth = 1.7.dp.toPx(),
+        cap = StrokeCap.Round,
+    )
+    val lockX = bounds.left + 55.dp.toPx()
+    val lockY = bounds.top + 8.dp.toPx()
+    drawRoundRect(
+        color = if (locked) Color.White.copy(alpha = 0.88f) else Color.White.copy(alpha = 0.34f),
+        topLeft = Offset(lockX, lockY),
+        size = Size(10.dp.toPx(), 8.dp.toPx()),
+        cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx()),
+        style = Stroke(1.4.dp.toPx()),
+    )
+    drawArc(
+        color = if (locked) Color.White.copy(alpha = 0.88f) else Color.White.copy(alpha = 0.34f),
+        startAngle = 200f,
+        sweepAngle = 140f,
+        useCenter = false,
+        topLeft = Offset(lockX + 1.5.dp.toPx(), lockY - 5.dp.toPx()),
+        size = Size(7.dp.toPx(), 9.dp.toPx()),
+        style = Stroke(1.4.dp.toPx(), cap = StrokeCap.Round),
+    )
+}
+
+private fun FlowGraphNode.facetContentNodeIds(): Set<FlowNodeId> =
+    (properties["nodeIds"] as? FlowSemanticValue.ListValue)
+        ?.values
+        .orEmpty()
+        .mapNotNull { (it as? FlowSemanticValue.StringValue)?.value }
+        .map(::FlowNodeId)
+        .toSet()
+
+private fun collapsedFacetContentNodeIds(
+    graph: FlowGraphDocument,
+    collapsedFacetNodeIds: Set<FlowNodeId>,
+): Set<FlowNodeId> =
+    graph.nodes
+        .filter { it.id in collapsedFacetNodeIds }
+        .flatMap { it.facetContentNodeIds() }
+        .toSet()
 
 internal data class FlowchartNodePort(
     val name: String,
@@ -486,8 +762,21 @@ internal fun flowArrowHead(
 }
 
 @Composable
-private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, controller: FlowchartController, config: FlowchartUiConfig, callbacks: FlowchartHostCallbacks, refresh: () -> Unit) {
+private fun FlowGestureLayer(
+    graph: FlowGraphDocument,
+    view: FlowViewDocument,
+    controller: FlowchartController,
+    config: FlowchartUiConfig,
+    callbacks: FlowchartHostCallbacks,
+    collapsedFacetNodeIds: Set<FlowNodeId>,
+    lockedFacetNodeIds: Set<FlowNodeId>,
+    onToggleFacetCollapsed: (FlowNodeId) -> Unit,
+    onToggleFacetLocked: (FlowNodeId) -> Unit,
+    refresh: () -> Unit,
+) {
     var dragNode by remember { mutableStateOf<FlowNodeId?>(null) }
+    var dragNodeGroup by remember { mutableStateOf<Set<FlowNodeId>>(emptySet()) }
+    var dragFacet by remember { mutableStateOf<FlowNodeId?>(null) }
     var dragPort by remember { mutableStateOf<FlowchartNodePortRef?>(null) }
     var dragPortAnchor by remember { mutableStateOf<Offset?>(null) }
     var dragPortPointer by remember { mutableStateOf<Offset?>(null) }
@@ -498,6 +787,8 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
     val portWidthPx = with(density) { 46.dp.toPx() }
     val portHeightPx = with(density) { 28.dp.toPx() }
     val portMagnetRadiusPx = with(density) { 28.dp.toPx() }
+    val platformView = LocalView.current
+    val hapticFeedback = LocalHapticFeedback.current
     var previousTapAt by remember { mutableLongStateOf(0L) }
     var previousTapPosition by remember { mutableStateOf<Offset?>(null) }
     val modifier = Modifier.fillMaxSize().testTag("flowchart-gestures")
@@ -527,21 +818,62 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
         .pointerInput(graph, config) {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
-                val dragStart = awaitTouchSlopOrCancellation(down.id) { change, _ -> change.consume() }
-                if (dragStart != null) {
-                    val startPortHit = hitNodePort(down.position, graph, currentView, portWidthPx, portHeightPx, portMagnetRadiusPx)
+                val hiddenNodeIds = collapsedFacetContentNodeIds(graph, collapsedFacetNodeIds)
+                val facetHit = hitFlowFacetHandle(down.position, graph, currentView)
+                if (facetHit != null && facetHit.action != FlowFacetHandleAction.Drag) {
+                    when (facetHit.action) {
+                        FlowFacetHandleAction.ToggleCollapse -> onToggleFacetCollapsed(facetHit.region.facet.id)
+                        FlowFacetHandleAction.ToggleLock -> onToggleFacetLocked(facetHit.region.facet.id)
+                        FlowFacetHandleAction.Drag -> Unit
+                    }
+                    playFlowchartFeedback(platformView, hapticFeedback, FlowchartFeedbackEvent.Connected, config)
+                    refresh()
+                    return@awaitEachGesture
+                }
+                val startPortHit = hitNodePort(down.position, graph, currentView, portWidthPx, portHeightPx, portMagnetRadiusPx)
                         ?.takeUnless { it.ref.inputSide }
+                        ?.takeUnless { it.ref.nodeId in hiddenNodeIds }
+                val nodeAtDown = if (startPortHit == null && config.nodeDraggingEnabled) {
+                    hitNode(down.position, currentView, hiddenNodeIds)
+                } else {
+                    null
+                }
+                val facetDragHit = facetHit?.takeIf {
+                    it.action == FlowFacetHandleAction.Drag && it.region.facet.id !in lockedFacetNodeIds
+                }
+                val dragStart = if (nodeAtDown != null || facetDragHit != null) {
+                    awaitLongPressOrCancellation(down.id)
+                } else {
+                    awaitTouchSlopOrCancellation(down.id) { change, _ -> change.consume() }
+                }
+                if (dragStart != null) {
                     dragPort = startPortHit?.ref
                     dragPortAnchor = startPortHit?.bounds?.center
                     dragPortPointer = startPortHit?.bounds?.center
-                    dragNode = if (dragPort == null && config.nodeDraggingEnabled) hitNode(down.position, currentView) else null
+                    dragNode = nodeAtDown
                     if (dragPort != null) {
                         controller.dispatch(FlowInteractionAction.SelectNode(dragPort!!.nodeId))
                         callbacks.onNodeSelected(dragPort!!.nodeId)
                         callbacks.onEdgeSelected(null)
                     } else if (dragNode != null) {
-                        controller.dispatch(FlowInteractionAction.BeginNodeDrag(dragNode!!, FlowPoint(down.position.x.toDouble(), down.position.y.toDouble())))
-                        callbacks.onNodeDragChanged(dragNode, FlowPoint(down.position.x.toDouble(), down.position.y.toDouble()))
+                        val movementMode = dragMovementModeForHit(down.position, currentView, dragNode!!)
+                        val startPoint = FlowPoint(dragStart.position.x.toDouble(), dragStart.position.y.toDouble())
+                        controller.dispatch(
+                            FlowInteractionAction.BeginNodeDrag(
+                                nodeId = dragNode!!,
+                                at = startPoint,
+                                movementMode = movementMode,
+                            ),
+                        )
+                        dragNodeGroup = controller.snapshot().interaction.dragState?.nodeIds.orEmpty()
+                        playFlowchartFeedback(platformView, hapticFeedback, FlowchartFeedbackEvent.DragStarted, config)
+                        callbacks.onNodeDragChanged(dragNode, startPoint)
+                    } else if (facetDragHit != null) {
+                        dragFacet = facetDragHit.region.facet.id
+                        dragNodeGroup = facetDragHit.region.nodeIds - hiddenNodeIds
+                        val startPoint = FlowPoint(dragStart.position.x.toDouble(), dragStart.position.y.toDouble())
+                        controller.dispatch(FlowInteractionAction.BeginNodeGroupDrag(dragNodeGroup, startPoint))
+                        playFlowchartFeedback(platformView, hapticFeedback, FlowchartFeedbackEvent.DragStarted, config)
                     } else if (config.panEnabled) {
                         panning = true
                         controller.dispatch(FlowInteractionAction.BeginViewportPan(FlowPoint(down.position.x.toDouble(), down.position.y.toDouble())))
@@ -555,7 +887,7 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
                             dragPortTarget = hitNodePort(change.position, graph, currentView, portWidthPx, portHeightPx, portMagnetRadiusPx)
                                 ?.takeIf { hit -> hit.ref.isCompatibleTargetFor(dragPort!!) }
                             dragPortPointer = dragPortTarget?.bounds?.center ?: change.position
-                        } else if (dragNode != null) {
+                        } else if (dragNode != null || dragFacet != null) {
                             controller.dispatch(FlowInteractionAction.UpdateNodeDrag(point))
                             callbacks.onNodeDragChanged(dragNode, point)
                         }
@@ -569,19 +901,25 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
                                 ?.ref
                                 ?.takeIf { it.isCompatibleTargetFor(sourcePort) }
                             if (targetPort != null) {
+                                playFlowchartFeedback(platformView, hapticFeedback, FlowchartFeedbackEvent.Connected, config)
                                 callbacks.onPortConnectionRequested(sourcePort, targetPort)
                             }
-                        } else if (dragNode != null) {
+                        } else if (dragNode != null || dragFacet != null) {
                             val finish = FlowPoint(latestDragPosition.x.toDouble(), latestDragPosition.y.toDouble())
                             controller.dispatch(FlowInteractionAction.CommitNodeDrag)
-                            callbacks.onNodeDragFinished(dragNode!!, finish)
+                            playFlowchartFeedback(platformView, hapticFeedback, FlowchartFeedbackEvent.Dropped, config)
+                            dragNode?.let { nodeId ->
+                                callbacks.onNodeDragFinished(nodeId, dragNodeGroup.ifEmpty { setOf(nodeId) }, finish)
+                            }
                         }
                         else if (panning) controller.dispatch(FlowInteractionAction.CommitViewportPan)
-                    } else if (dragNode != null) {
+                    } else if (dragNode != null || dragFacet != null) {
                         controller.dispatch(FlowInteractionAction.CancelNodeDrag)
                     }
                     callbacks.onNodeDragChanged(null, null)
                     dragNode = null
+                    dragNodeGroup = emptySet()
+                    dragFacet = null
                     dragPort = null
                     dragPortAnchor = null
                     dragPortPointer = null
@@ -595,7 +933,7 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
                         prior != null && (offset - prior).getDistance() <= viewConfiguration.touchSlop
                     previousTapAt = down.uptimeMillis
                     previousTapPosition = offset
-                    val node = hitNode(offset, currentView)
+                    val node = hitNode(offset, currentView, hiddenNodeIds)
                     if (isDoubleTap) {
                         node?.let(callbacks.onNodeInvoked)
                     } else {
@@ -648,6 +986,67 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
     }
 }
 
+private enum class FlowchartFeedbackEvent {
+    DragStarted,
+    Dropped,
+    Deleted,
+    Connected,
+}
+
+private fun playFlowchartFeedback(
+    platformView: android.view.View,
+    haptic: HapticFeedback,
+    event: FlowchartFeedbackEvent,
+    config: FlowchartUiConfig,
+) {
+    if (config.hapticFeedbackEnabled) {
+        val hapticType = when (event) {
+            FlowchartFeedbackEvent.DragStarted -> HapticFeedbackType.TextHandleMove
+            FlowchartFeedbackEvent.Dropped,
+            FlowchartFeedbackEvent.Connected,
+            -> HapticFeedbackType.LongPress
+            FlowchartFeedbackEvent.Deleted -> HapticFeedbackType.LongPress
+        }
+        haptic.performHapticFeedback(hapticType)
+        val platformHaptic = when (event) {
+            FlowchartFeedbackEvent.DragStarted -> HapticFeedbackConstants.TEXT_HANDLE_MOVE
+            FlowchartFeedbackEvent.Dropped,
+            FlowchartFeedbackEvent.Connected,
+            -> HapticFeedbackConstants.VIRTUAL_KEY
+            FlowchartFeedbackEvent.Deleted -> HapticFeedbackConstants.LONG_PRESS
+        }
+        platformView.performHapticFeedback(
+            platformHaptic,
+            HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING,
+        )
+    }
+    if (!config.soundEffectsEnabled) return
+    platformView.playSoundEffect(SoundEffectConstants.CLICK)
+    val (tone, durationMs, volume) = when (event) {
+        FlowchartFeedbackEvent.DragStarted -> Triple(ToneGenerator.TONE_PROP_BEEP, 30, 24)
+        FlowchartFeedbackEvent.Dropped -> Triple(ToneGenerator.TONE_PROP_BEEP, 30, 20)
+        FlowchartFeedbackEvent.Connected -> Triple(ToneGenerator.TONE_PROP_ACK, 44, 32)
+        FlowchartFeedbackEvent.Deleted -> Triple(ToneGenerator.TONE_PROP_NACK, 54, 32)
+    }
+    runCatching {
+        val generator = ToneGenerator(AudioManager.STREAM_NOTIFICATION, volume)
+        generator.startTone(tone, durationMs)
+        platformView.postDelayed({ generator.release() }, (durationMs + 40).toLong())
+    }
+}
+
+private fun dragMovementModeForHit(
+    offset: Offset,
+    view: FlowViewDocument,
+    nodeId: FlowNodeId,
+): FlowMovementMode {
+    val graphPoint = FlowViewportTransform.screenToGraph(FlowPoint(offset.x.toDouble(), offset.y.toDouble()), view.viewport)
+    val nodeView = view.nodeViews.firstOrNull { it.nodeId == nodeId } ?: return FlowMovementMode.NEXT_FOLLOW_FIRST
+    val size = nodeView.size ?: FlowSize(160.0, 72.0)
+    val centerX = nodeView.position.x + size.width / 2.0
+    return if (graphPoint.x <= centerX) FlowMovementMode.NEXT_FOLLOW_FIRST else FlowMovementMode.SINGLE
+}
+
 internal fun FlowchartNodePortRef.isCompatibleTargetFor(source: FlowchartNodePortRef): Boolean =
     inputSide &&
         !source.inputSide &&
@@ -698,11 +1097,19 @@ private fun List<Offset>.removeCollinearOffsets(): List<Offset> {
     }
 }
 
-@Composable private fun FlowLabelsAndSemantics(graph: FlowGraphDocument, view: FlowViewDocument, state: FlowchartControllerState, callbacks: FlowchartHostCallbacks) {
+@Composable private fun FlowLabelsAndSemantics(
+    graph: FlowGraphDocument,
+    view: FlowViewDocument,
+    state: FlowchartControllerState,
+    callbacks: FlowchartHostCallbacks,
+    collapsedFacetNodeIds: Set<FlowNodeId>,
+) {
     val density = LocalDensity.current
+    val hiddenNodeIds = collapsedFacetContentNodeIds(graph, collapsedFacetNodeIds)
     fun xDp(value: Double) = with(density) { value.toFloat().toDp() }
     Box(Modifier.fillMaxSize()) {
         graph.edges.forEach { edge ->
+            if (edge.sourceNodeId in hiddenNodeIds || edge.targetNodeId in hiddenNodeIds) return@forEach
             val label = edge.label ?: when (edge.kind) { FlowEdgeKind.TRUE_BRANCH -> "TRUE"; FlowEdgeKind.FALSE_BRANCH -> "FALSE"; FlowEdgeKind.ELSE_IF_BRANCH -> "ELSE IF"; FlowEdgeKind.LOOP_BACK -> "LOOP"; else -> null } ?: return@forEach
             val points = edgeScreenPoints(edge, graph, view)
             val center = points.getOrNull(points.size / 2) ?: return@forEach
@@ -710,6 +1117,7 @@ private fun List<Offset>.removeCollinearOffsets(): List<Offset> {
         }
         graph.nodes.forEach { node ->
         if (node.isBackgroundFacetNode()) return@forEach
+        if (node.id in hiddenNodeIds) return@forEach
         val nodeView = view.nodeViews.firstOrNull { it.nodeId == node.id } ?: return@forEach
         val runtime = state.runtime?.nodeStates?.get(node.id)
         val screen = FlowViewportTransform.graphToScreen(nodeView.position, view.viewport)
@@ -724,9 +1132,18 @@ private fun List<Offset>.removeCollinearOffsets(): List<Offset> {
     } }
 }
 
-private fun hitNode(offset: Offset, view: FlowViewDocument): FlowNodeId? {
+private fun hitNode(
+    offset: Offset,
+    view: FlowViewDocument,
+    hiddenNodeIds: Set<FlowNodeId> = emptySet(),
+): FlowNodeId? {
     val graphPoint = FlowViewportTransform.screenToGraph(FlowPoint(offset.x.toDouble(), offset.y.toDouble()), view.viewport)
-    return view.nodeViews.asReversed().firstOrNull { FlowRect(it.position, it.size ?: FlowSize(160.0, 72.0)).contains(graphPoint) }?.nodeId
+    return view.nodeViews.asReversed()
+        .firstOrNull {
+            it.nodeId !in hiddenNodeIds &&
+                FlowRect(it.position, it.size ?: FlowSize(160.0, 72.0)).contains(graphPoint)
+        }
+        ?.nodeId
 }
 
 private fun hitEdge(offset: Offset, graph: FlowGraphDocument, view: FlowViewDocument): FlowEdgeId? {

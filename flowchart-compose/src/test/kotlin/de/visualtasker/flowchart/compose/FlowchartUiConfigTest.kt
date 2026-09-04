@@ -81,6 +81,10 @@ public class FlowchartUiConfigTest {
         assertThrows(IllegalArgumentException::class.java) { FlowchartShapeTokens(arrowLengthDp = -1f) }
     }
 
+    @Test public fun `default edge stroke is touch readable`() {
+        assertTrue(FlowchartShapeTokens().edgeStrokeWidthDp >= 2.6f)
+    }
+
     @Test
     public fun `arrow head follows final routed segment without changing route`() {
         val route = listOf(Offset(10f, 10f), Offset(40f, 10f), Offset(40f, 50f))
@@ -110,6 +114,66 @@ public class FlowchartUiConfigTest {
 
         assertEquals(listOf(Offset(10f, 20f), Offset(50f, 20f), Offset(50f, 80f), Offset(90f, 80f)), route)
         assertTrue(route.zipWithNext().all { (from, to) -> from.x == to.x || from.y == to.y })
+    }
+
+    @Test
+    public fun `edge bridges are emitted for orthogonal crossings`() {
+        val current = listOf(Offset(0f, 50f), Offset(100f, 50f))
+        val previous = listOf(listOf(Offset(40f, 0f), Offset(40f, 100f)))
+
+        val bridges = edgeBridgeIntersections(current, previous, minDistanceFromEnds = 8f)
+
+        assertEquals(1, bridges.size)
+        assertEquals(40f, bridges.single().center.x)
+        assertEquals(50f, bridges.single().center.y)
+    }
+
+    @Test
+    public fun `edge bridges ignore near endpoint crossings`() {
+        val current = listOf(Offset(0f, 50f), Offset(100f, 50f))
+        val previous = listOf(listOf(Offset(4f, 0f), Offset(4f, 100f)))
+
+        assertTrue(edgeBridgeIntersections(current, previous, minDistanceFromEnds = 8f).isEmpty())
+    }
+
+    @Test
+    public fun `facet handle is placed above region and exposes actions`() {
+        val node = FlowGraphNode(
+            id = FlowNodeId("block:wait"),
+            kind = FlowSemanticKind(FlowNodeKind.ACTION),
+            label = "Wait",
+        )
+        val facet = FlowGraphNode(
+            id = FlowNodeId("facet:bulk"),
+            kind = FlowSemanticKind(FlowNodeKind.SYNTHETIC),
+            label = "Bulk",
+            properties = mapOf(
+                "visualFacet" to FlowSemanticValue.BooleanValue(true),
+                "nodeIds" to FlowSemanticValue.ListValue(listOf(FlowSemanticValue.StringValue(node.id.value))),
+            ),
+        )
+        val graph = FlowGraphDocument(
+            documentId = FlowDocumentId("graph"),
+            documentRevision = FlowDocumentRevision("1"),
+            producerId = "test",
+            producerVersion = "1",
+            sourceRevision = "1",
+            sourceHash = "hash",
+            nodes = listOf(node, facet),
+        )
+        val view = FlowViewDocument(
+            documentId = graph.documentId,
+            compatibleDocumentRevision = graph.documentRevision,
+            surfaceId = FlowSurfaceId("surface"),
+            nodeViews = listOf(FlowNodeView(node.id, FlowPoint(100.0, 80.0), FlowSize(120.0, 48.0))),
+        )
+
+        val region = flowFacetRegions(graph, view) { Offset(it.x.toFloat(), it.y.toFloat()) }.single()
+
+        assertTrue(region.handleBounds.bottom < region.bounds.top)
+        assertEquals(FlowFacetHandleAction.Drag, hitFlowFacetHandle(region.gripBounds.center, graph, view)?.action)
+        assertEquals(FlowFacetHandleAction.ToggleCollapse, hitFlowFacetHandle(region.collapseBounds.center, graph, view)?.action)
+        assertEquals(FlowFacetHandleAction.ToggleLock, hitFlowFacetHandle(region.lockBounds.center, graph, view)?.action)
     }
 
     @Test

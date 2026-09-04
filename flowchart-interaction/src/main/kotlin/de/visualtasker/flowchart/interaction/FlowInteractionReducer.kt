@@ -12,6 +12,7 @@ public object FlowInteractionReducer {
         FlowInteractionAction.ClearSelection -> result(state.copy(selectedNodeIds = emptySet(), selectedEdgeIds = emptySet()), view)
         is FlowInteractionAction.SetMovementMode -> result(state.copy(movementMode = action.mode), view)
         is FlowInteractionAction.BeginNodeDrag -> beginDrag(state, action, graph, view)
+        is FlowInteractionAction.BeginNodeGroupDrag -> beginGroupDrag(state, action, view)
         is FlowInteractionAction.UpdateNodeDrag -> updateDrag(state, action, view)
         FlowInteractionAction.CommitNodeDrag -> commitDrag(state, view)
         FlowInteractionAction.CancelNodeDrag -> cancelDrag(state, view)
@@ -26,11 +27,18 @@ public object FlowInteractionReducer {
     }
 
     private fun beginDrag(state: FlowInteractionState, action: FlowInteractionAction.BeginNodeDrag, graph: FlowGraphDocument, view: FlowViewDocument): FlowInteractionResult {
-        val ids = when (state.movementMode) {
+        val movementMode = action.movementMode ?: state.movementMode
+        val ids = when (movementMode) {
             FlowMovementMode.SINGLE -> setOf(action.nodeId)
             FlowMovementMode.NEXT_FOLLOW_FIRST -> downstream(graph, action.nodeId)
             FlowMovementMode.CONNECTED_BFS -> connected(graph, action.nodeId)
         }
+        val positions = view.nodeViews.filter { it.nodeId in ids }.associate { it.nodeId to it.position }
+        return result(state.copy(dragState = FlowNodeDragState(action.at, action.at, ids, positions)), view)
+    }
+
+    private fun beginGroupDrag(state: FlowInteractionState, action: FlowInteractionAction.BeginNodeGroupDrag, view: FlowViewDocument): FlowInteractionResult {
+        val ids = action.nodeIds.filterTo(linkedSetOf()) { id -> view.nodeViews.any { it.nodeId == id } }
         val positions = view.nodeViews.filter { it.nodeId in ids }.associate { it.nodeId to it.position }
         return result(state.copy(dragState = FlowNodeDragState(action.at, action.at, ids, positions)), view)
     }

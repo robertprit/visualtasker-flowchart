@@ -71,6 +71,29 @@ public class InteractionTest {
         assertEquals(FlowPoint(60.0, 0.0), result.view.nodeViews[3].position)
     }
 
+    @Test public fun `begin drag action can override global movement mode`() {
+        var result = FlowInteractionReducer.reduce(
+            FlowInteractionState(movementMode = FlowMovementMode.NEXT_FOLLOW_FIRST),
+            FlowInteractionAction.BeginNodeDrag(
+                nodeId = nodes[0].id,
+                at = FlowPoint(0.0, 0.0),
+                movementMode = FlowMovementMode.SINGLE,
+            ),
+            graph,
+            view,
+        )
+        result = FlowInteractionReducer.reduce(
+            result.state,
+            FlowInteractionAction.UpdateNodeDrag(FlowPoint(8.0, 0.0)),
+            graph,
+            result.view,
+        )
+
+        assertEquals(setOf(nodes[0].id), result.state.dragState!!.nodeIds)
+        assertEquals(FlowPoint(8.0, 0.0), result.view.nodeViews.single { it.nodeId == nodes[0].id }.position)
+        assertEquals(FlowPoint(20.0, 0.0), result.view.nodeViews.single { it.nodeId == nodes[1].id }.position)
+    }
+
     @Test public fun `screen drag delta is converted through viewport zoom and pan`() {
         listOf(0.5, 1.0, 2.0).forEach { zoom ->
             val transformedView = view.copy(viewport = FlowViewport(pan = FlowPoint(75.0, -30.0), zoom = zoom))
