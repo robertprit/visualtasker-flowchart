@@ -5,6 +5,7 @@ import de.visualtasker.flowchart.domain.*
 import de.visualtasker.flowchart.validation.FlowGraphValidator
 import java.util.ArrayDeque
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 public object FlowLayoutEngine {
     public fun layout(
@@ -172,7 +173,7 @@ public object FlowLayoutEngine {
         val start = portOut(edge, sourceNode, source, config.orientation)
         val end = portIn(edge, targetNode, target, config.orientation)
         if (locked != null && locked.bendPoints.isNotEmpty()) return makeRoute(edge.id, FlowRouteKind.ORTHOGONAL, orthogonalize(listOf(start) + locked.bendPoints.map { FlowRoutePoint(it.x, it.y) } + end), true)
-        if (edge.id in backEdges) {
+        if (edge.id in backEdges && edge.kind in loopBackRouteKinds) {
             val lane = config.routingClearance + 24.0
             val points = when (config.orientation) {
             FlowLayoutOrientation.TOP_TO_BOTTOM -> listOf(start, FlowRoutePoint(source.left - lane, start.y), FlowRoutePoint(source.left - lane, target.top - lane), FlowRoutePoint(end.x, target.top - lane), end)
@@ -187,7 +188,15 @@ public object FlowLayoutEngine {
         }
         val points = if (collides(directPoints, obstacles, config.routingClearance)) when (config.orientation) {
             FlowLayoutOrientation.TOP_TO_BOTTOM -> manhattanRoute(edge, start, end, source, target, obstacles, config, relaxed = true, laneIndex = laneIndex)
-            FlowLayoutOrientation.LEFT_TO_RIGHT -> { val lane = obstacles.maxOfOrNull { it.bottom }?.plus(config.routingClearance) ?: max(source.bottom, target.bottom) + config.routingClearance; listOf(start, FlowRoutePoint(start.x, lane), FlowRoutePoint(end.x, lane), end) }
+            FlowLayoutOrientation.LEFT_TO_RIGHT -> {
+                val clearance = config.routingClearance + config.nodeSpacing * 0.5
+                collisionFreeCandidate(
+                    edge,
+                    horizontalOuterLaneCandidates(start, end, source, target, obstacles, clearance),
+                    obstacles,
+                    config.routingClearance,
+                )
+            }
         } else directPoints
         val kind = if (edge.kind in setOf(
                 FlowEdgeKind.TRUE_BRANCH,
@@ -212,7 +221,7 @@ public object FlowLayoutEngine {
     ): List<FlowRoutePoint> {
         val clearance = config.routingClearance + if (relaxed) config.nodeSpacing * 0.5 else 0.0
         val lanePadding = laneIndex * (config.routingClearance + 12.0)
-        val candidates = when (edge.kind) {
+        val baseCandidates = when (edge.kind) {
             FlowEdgeKind.LOOP_BODY,
             FlowEdgeKind.LOOP_BACK,
             -> leftLaneCandidates(start, end, source, target, clearance + lanePadding)
@@ -220,13 +229,19 @@ public object FlowLayoutEngine {
             FlowEdgeKind.ELSE_IF_BRANCH,
             FlowEdgeKind.CONDITION,
             FlowEdgeKind.DATA_FLOW,
-            -> sideLaneCandidates(start, end, source, target, clearance + lanePadding)
+            -> branchSideCandidates(start, end, source, target, clearance) +
+                sideLaneCandidates(start, end, source, target, clearance + lanePadding)
             else -> verticalStemCandidates(start, end, source, target, clearance)
-        }.map { it.compactOrthogonalPoints() }
-        return candidates
-            .filterNot { collides(it, obstacles, config.routingClearance) }
-            .minByOrNull(::routeLength)
-            ?: candidates.minBy(::routeLength)
+        }
+        val extraCandidates = if (edge.kind in sideOutputKinds) {
+            rightOuterLaneCandidates(start, end, source, target, obstacles, clearance + lanePadding)
+        } else {
+            outerLaneCandidates(start, end, source, target, obstacles, clearance + lanePadding)
+        }
+        val candidates = (baseCandidates + extraCandidates)
+            .map { it.compactOrthogonalPoints() }
+            .distinctBy { candidateKey(it) }
+        return collisionFreeCandidate(edge, candidates, obstacles, config.routingClearance)
     }
 
     private fun verticalStemCandidates(
@@ -265,6 +280,24 @@ public object FlowLayoutEngine {
         }
     }
 
+    private fun branchSideCandidates(
+        start: FlowRoutePoint,
+        end: FlowRoutePoint,
+        source: FlowRect,
+        target: FlowRect,
+        clearance: Double,
+    ): List<List<FlowRoutePoint>> {
+        val stub = maxOf(16.0, clearance * 0.5)
+        val closeLane = minOf(target.left - stub, source.right + stub).coerceAtLeast(source.right + stub)
+        val openLane = maxOf(source.right, target.right) + clearance * 2.0
+        val beforeTarget = target.top - clearance
+        return listOf(
+            listOf(start, FlowRoutePoint(closeLane, start.y), FlowRoutePoint(closeLane, end.y), end),
+            listOf(start, FlowRoutePoint(closeLane, start.y), FlowRoutePoint(closeLane, beforeTarget), FlowRoutePoint(end.x, beforeTarget), end),
+            listOf(start, FlowRoutePoint(openLane, start.y), FlowRoutePoint(openLane, end.y), end),
+        )
+    }
+
     private fun leftLaneCandidates(
         start: FlowRoutePoint,
         end: FlowRoutePoint,
@@ -278,6 +311,90 @@ public object FlowLayoutEngine {
             listOf(start, FlowRoutePoint(lane, start.y), FlowRoutePoint(lane, end.y), end)
         }
     }
+
+    private fun outerLaneCandidates(
+        start: FlowRoutePoint,
+        end: FlowRoutePoint,
+        source: FlowRect,
+        target: FlowRect,
+        obstacles: Collection<FlowRect>,
+        clearance: Double,
+    ): List<List<FlowRoutePoint>> {
+        val allRects = obstacles + source + target
+        val outerClearance = clearance * 2.0
+        val leftOuter = allRects.minOfOrNull { it.left }?.minus(outerClearance) ?: minOf(source.left, target.left) - outerClearance
+        val rightOuter = allRects.maxOfOrNull { it.right }?.plus(outerClearance) ?: maxOf(source.right, target.right) + outerClearance
+        val belowOuter = allRects.maxOfOrNull { it.bottom }?.plus(outerClearance) ?: maxOf(source.bottom, target.bottom) + outerClearance
+        val aboveOuter = allRects.minOfOrNull { it.top }?.minus(outerClearance) ?: minOf(source.top, target.top) - outerClearance
+        val belowSource = source.bottom + clearance
+        val aboveSource = source.top - clearance
+        val beforeTarget = target.top - clearance
+        return listOf(
+            listOf(start, FlowRoutePoint(leftOuter, start.y), FlowRoutePoint(leftOuter, end.y), end),
+            listOf(start, FlowRoutePoint(rightOuter, start.y), FlowRoutePoint(rightOuter, end.y), end),
+            listOf(start, FlowRoutePoint(start.x, belowSource), FlowRoutePoint(rightOuter, belowSource), FlowRoutePoint(rightOuter, end.y), end),
+            listOf(start, FlowRoutePoint(start.x, aboveSource), FlowRoutePoint(rightOuter, aboveSource), FlowRoutePoint(rightOuter, end.y), end),
+            listOf(start, FlowRoutePoint(start.x, beforeTarget), FlowRoutePoint(rightOuter, beforeTarget), FlowRoutePoint(rightOuter, end.y), end),
+            listOf(start, FlowRoutePoint(start.x, aboveOuter), FlowRoutePoint(rightOuter, aboveOuter), FlowRoutePoint(rightOuter, end.y), end),
+            listOf(start, FlowRoutePoint(start.x, belowOuter), FlowRoutePoint(rightOuter, belowOuter), FlowRoutePoint(rightOuter, end.y), end),
+            listOf(start, FlowRoutePoint(start.x, belowOuter), FlowRoutePoint(end.x, belowOuter), end),
+            listOf(start, FlowRoutePoint(start.x, aboveOuter), FlowRoutePoint(end.x, aboveOuter), end),
+        )
+    }
+
+    private fun rightOuterLaneCandidates(
+        start: FlowRoutePoint,
+        end: FlowRoutePoint,
+        source: FlowRect,
+        target: FlowRect,
+        obstacles: Collection<FlowRect>,
+        clearance: Double,
+    ): List<List<FlowRoutePoint>> {
+        val allRects = obstacles + source + target
+        val outerClearance = clearance * 2.0
+        val rightOuter = allRects.maxOfOrNull { it.right }?.plus(outerClearance) ?: maxOf(source.right, target.right) + outerClearance
+        val belowOuter = allRects.maxOfOrNull { it.bottom }?.plus(outerClearance) ?: maxOf(source.bottom, target.bottom) + outerClearance
+        val aboveOuter = allRects.minOfOrNull { it.top }?.minus(outerClearance) ?: minOf(source.top, target.top) - outerClearance
+        return listOf(
+            listOf(start, FlowRoutePoint(start.x, aboveOuter), FlowRoutePoint(rightOuter, aboveOuter), FlowRoutePoint(rightOuter, end.y), end),
+            listOf(start, FlowRoutePoint(start.x, belowOuter), FlowRoutePoint(rightOuter, belowOuter), FlowRoutePoint(rightOuter, end.y), end),
+            listOf(start, FlowRoutePoint(rightOuter, start.y), FlowRoutePoint(rightOuter, end.y), end),
+        )
+    }
+
+    private fun horizontalOuterLaneCandidates(
+        start: FlowRoutePoint,
+        end: FlowRoutePoint,
+        source: FlowRect,
+        target: FlowRect,
+        obstacles: Collection<FlowRect>,
+        clearance: Double,
+    ): List<List<FlowRoutePoint>> {
+        val allRects = obstacles + source + target
+        val outerClearance = clearance * 2.0
+        val belowOuter = allRects.maxOfOrNull { it.bottom }?.plus(outerClearance) ?: maxOf(source.bottom, target.bottom) + outerClearance
+        val aboveOuter = allRects.minOfOrNull { it.top }?.minus(outerClearance) ?: minOf(source.top, target.top) - outerClearance
+        return listOf(
+            listOf(start, FlowRoutePoint(start.x, belowOuter), FlowRoutePoint(end.x, belowOuter), end),
+            listOf(start, FlowRoutePoint(start.x, aboveOuter), FlowRoutePoint(end.x, aboveOuter), end),
+        ).map { it.compactOrthogonalPoints() }
+    }
+
+    private fun collisionFreeCandidate(
+        edge: FlowGraphEdge,
+        candidates: List<List<FlowRoutePoint>>,
+        obstacles: Collection<FlowRect>,
+        clearance: Double,
+    ): List<FlowRoutePoint> =
+        candidates
+            .filterNot { collides(it, obstacles, clearance) }
+            .minWithOrNull(compareBy<List<FlowRoutePoint>> { bendCount(it) }.thenBy(::routeLength))
+            ?: candidates.minWithOrNull(
+                compareBy<List<FlowRoutePoint>> { collisionCount(it, obstacles, clearance) }
+                    .thenBy { directionPenalty(edge, it) }
+                    .thenBy(::routeLength)
+            )
+            ?: listOf()
 
     private fun laneIndexes(edges: List<FlowGraphEdge>): Map<FlowEdgeId, Int> =
         edges
@@ -429,7 +546,7 @@ public object FlowLayoutEngine {
                         val value = bounds[edge.sourceNodeId] ?: return@forEachIndexed
                         bounds[edge.sourceNodeId] = value.copy(
                             origin = FlowPoint(
-                                x = consumer.right + config.nodeSpacing * 0.45 + index * (value.size.width + config.nodeSpacing * 0.35),
+                                x = consumer.right + config.nodeSpacing + index * (value.size.width + config.nodeSpacing * 0.6),
                                 y = consumer.top + (consumer.size.height - value.size.height) / 2.0,
                             ),
                         )
@@ -474,8 +591,8 @@ public object FlowLayoutEngine {
         bounds: MutableMap<FlowNodeId, FlowRect>,
         config: FlowLayoutConfig,
     ) {
-        val minGap = config.routingClearance + 10.0
-        repeat(bounds.size.coerceAtLeast(1) * 3) {
+        val minGap = max(config.routingClearance + 16.0, config.nodeSpacing * 0.55)
+        repeat(bounds.size.coerceAtLeast(1) * 5) {
             var changed = false
             val ordered = bounds.entries.sortedWith(compareBy({ it.value.top }, { it.value.left }, { it.key.value }))
             for (i in ordered.indices) {
@@ -624,6 +741,12 @@ public object FlowLayoutEngine {
         FlowEdgeKind.LOOP_BACK,
     )
 
+    private val loopBackRouteKinds: Set<FlowEdgeKind> = setOf(
+        FlowEdgeKind.SEQUENCE,
+        FlowEdgeKind.LOOP_BODY,
+        FlowEdgeKind.LOOP_BACK,
+    )
+
     private fun orthogonalize(points: List<FlowRoutePoint>): List<FlowRoutePoint> {
         if (points.size < 2) return points
         return buildList {
@@ -660,13 +783,28 @@ public object FlowLayoutEngine {
             kotlin.math.abs(from.x - to.x) + kotlin.math.abs(from.y - to.y)
         }
 
+    private fun bendCount(points: List<FlowRoutePoint>): Int =
+        points.compactOrthogonalPoints().size.coerceAtLeast(2) - 2
+
+    private fun candidateKey(points: List<FlowRoutePoint>): String =
+        points.joinToString("|") { "${it.x.roundToInt()}:${it.y.roundToInt()}" }
+
+    private fun collisionCount(points: List<FlowRoutePoint>, obstacles: Collection<FlowRect>, clearance: Double): Int =
+        points.zipWithNext().sumOf { (start, end) -> obstacles.count { rect -> segmentIntersects(start, end, rect, clearance) } }
+
+    private fun directionPenalty(edge: FlowGraphEdge, points: List<FlowRoutePoint>): Int =
+        if (edge.kind in sideOutputKinds && points.any { it.x < points.first().x }) 1 else 0
+
     private fun makeRoute(id: FlowEdgeId, kind: FlowRouteKind, points: List<FlowRoutePoint>, dummy: Boolean): FlowRoute = FlowRoute(id, kind, points, points.zipWithNext(::FlowRouteSegment), dummy)
     private fun collides(points: List<FlowRoutePoint>, obstacles: Collection<FlowRect>, clearance: Double): Boolean = points.zipWithNext().any { (start, end) -> obstacles.any { rect ->
+        segmentIntersects(start, end, rect, clearance)
+    } }
+    private fun segmentIntersects(start: FlowRoutePoint, end: FlowRoutePoint, rect: FlowRect, clearance: Double): Boolean {
         val left = rect.left - clearance; val right = rect.right + clearance; val top = rect.top - clearance; val bottom = rect.bottom + clearance
-        if (start.x == end.x) start.x in left..right && rangesOverlap(start.y, end.y, top, bottom)
+        return if (start.x == end.x) start.x in left..right && rangesOverlap(start.y, end.y, top, bottom)
         else if (start.y == end.y) start.y in top..bottom && rangesOverlap(start.x, end.x, left, right)
         else true
-    } }
+    }
     private fun rangesOverlap(a: Double, b: Double, low: Double, high: Double): Boolean = minOf(a, b) <= high && maxOf(a, b) >= low
     private fun finite(rect: FlowRect): Boolean = listOf(rect.left, rect.top, rect.right, rect.bottom).all(Double::isFinite) && rect.size.width > 0 && rect.size.height > 0
     private fun seededKey(value: String, seed: Long): String = "${value.hashCode().toLong() xor seed}:$value"

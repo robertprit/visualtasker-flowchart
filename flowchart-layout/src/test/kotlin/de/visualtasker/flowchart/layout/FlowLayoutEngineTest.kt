@@ -262,6 +262,66 @@ public class FlowLayoutEngineTest {
         }
     }
 
+    @Test public fun `complex code layout keeps nodes separated and routes orthogonal around nodes`() {
+        val nodes = listOf(
+            FlowGraphNode(FlowNodeId("start"), FlowSemanticKind(FlowNodeKind.ENTRY), "START"),
+            FlowGraphNode(FlowNodeId("repeat"), FlowSemanticKind(FlowNodeKind.LOOP_START), "repeat"),
+            FlowGraphNode(FlowNodeId("if"), FlowSemanticKind(FlowNodeKind.DECISION), "if"),
+            FlowGraphNode(FlowNodeId("then"), FlowSemanticKind(FlowNodeKind.ACTION), "then"),
+            FlowGraphNode(FlowNodeId("elif"), FlowSemanticKind(FlowNodeKind.ACTION), "elseif"),
+            FlowGraphNode(FlowNodeId("else"), FlowSemanticKind(FlowNodeKind.ACTION), "else"),
+            FlowGraphNode(FlowNodeId("join:if"), FlowSemanticKind(FlowNodeKind.SYNTHETIC), "JOIN", properties = mapOf("syntheticJoin" to FlowSemanticValue.BooleanValue(true), "ownerNodeId" to FlowSemanticValue.StringValue("if"))),
+            FlowGraphNode(FlowNodeId("compare"), FlowSemanticKind(FlowNodeKind.DECISION), "compare"),
+            FlowGraphNode(FlowNodeId("left"), FlowSemanticKind(FlowNodeKind.INPUT), "left"),
+            FlowGraphNode(FlowNodeId("right"), FlowSemanticKind(FlowNodeKind.INPUT), "right"),
+            FlowGraphNode(FlowNodeId("after"), FlowSemanticKind(FlowNodeKind.ACTION), "after"),
+        )
+        val graph = FlowGraphDocument(
+            documentId = FlowDocumentId("complex-code"),
+            documentRevision = FlowDocumentRevision("1"),
+            producerId = "fixture",
+            producerVersion = "1",
+            sourceRevision = "1",
+            sourceHash = "hash",
+            entryNodeId = FlowNodeId("start"),
+            nodes = nodes,
+            edges = listOf(
+                FlowGraphEdge(FlowEdgeId("start-repeat"), FlowNodeId("start"), FlowNodeId("repeat"), FlowEdgeKind.SEQUENCE),
+                FlowGraphEdge(FlowEdgeId("repeat-if"), FlowNodeId("repeat"), FlowNodeId("if"), FlowEdgeKind.LOOP_BODY),
+                FlowGraphEdge(FlowEdgeId("if-then"), FlowNodeId("if"), FlowNodeId("then"), FlowEdgeKind.TRUE_BRANCH),
+                FlowGraphEdge(FlowEdgeId("if-elif"), FlowNodeId("if"), FlowNodeId("elif"), FlowEdgeKind.ELSE_IF_BRANCH),
+                FlowGraphEdge(FlowEdgeId("if-else"), FlowNodeId("if"), FlowNodeId("else"), FlowEdgeKind.FALSE_BRANCH),
+                FlowGraphEdge(FlowEdgeId("then-join"), FlowNodeId("then"), FlowNodeId("join:if"), FlowEdgeKind.SEQUENCE),
+                FlowGraphEdge(FlowEdgeId("elif-join"), FlowNodeId("elif"), FlowNodeId("join:if"), FlowEdgeKind.SEQUENCE),
+                FlowGraphEdge(FlowEdgeId("else-join"), FlowNodeId("else"), FlowNodeId("join:if"), FlowEdgeKind.SEQUENCE),
+                FlowGraphEdge(FlowEdgeId("join-repeat"), FlowNodeId("join:if"), FlowNodeId("repeat"), FlowEdgeKind.LOOP_BACK),
+                FlowGraphEdge(FlowEdgeId("repeat-after"), FlowNodeId("repeat"), FlowNodeId("after"), FlowEdgeKind.LOOP_EXIT),
+                FlowGraphEdge(FlowEdgeId("condition"), FlowNodeId("compare"), FlowNodeId("if"), FlowEdgeKind.CONDITION),
+                FlowGraphEdge(FlowEdgeId("left-input"), FlowNodeId("left"), FlowNodeId("compare"), FlowEdgeKind.DATA_FLOW),
+                FlowGraphEdge(FlowEdgeId("right-input"), FlowNodeId("right"), FlowNodeId("compare"), FlowEdgeKind.DATA_FLOW),
+            ),
+        )
+
+        val result = FlowLayoutEngine.layout(graph)
+        val start = result.nodeBounds.getValue(FlowNodeId("start"))
+        val ifBounds = result.nodeBounds.getValue(FlowNodeId("if"))
+        val thenBounds = result.nodeBounds.getValue(FlowNodeId("then"))
+        val elifBounds = result.nodeBounds.getValue(FlowNodeId("elif"))
+        val elseBounds = result.nodeBounds.getValue(FlowNodeId("else"))
+        val compareBounds = result.nodeBounds.getValue(FlowNodeId("compare"))
+        val minLeft = result.nodeBounds.values.minOf { it.left }
+
+        assertEquals(minLeft, start.left, 0.001)
+        assertTrue(thenBounds.left > ifBounds.right)
+        assertTrue(elifBounds.left > thenBounds.left)
+        assertTrue(elifBounds.top > thenBounds.top)
+        assertEquals(ifBounds.left, elseBounds.left, 0.001)
+        assertTrue(compareBounds.left > ifBounds.right)
+        result.assertNoNodeOverlaps(gap = 1.0)
+        result.assertOrthogonalRoutes()
+        result.assertRoutesAvoidNodes(graph, gap = 1.0)
+    }
+
     @Test public fun `locked bend routes are normalized to orthogonal segments`() {
         val graph = graph(listOf("a", "b"), listOf("a" to "b"))
         val view = FlowViewDocument(
@@ -386,6 +446,36 @@ public class FlowLayoutEngineTest {
             start.y in top..bottom && minOf(start.x, end.x) <= right && maxOf(start.x, end.x) >= left
         } else {
             true
+        }
+    }
+
+    private fun FlowLayoutResult.assertNoNodeOverlaps(gap: Double) {
+        val bounds = nodeBounds.values.toList()
+        bounds.forEachIndexed { index, first ->
+            bounds.drop(index + 1).forEach { second ->
+                assertFalse(first.overlaps(second, gap))
+            }
+        }
+    }
+
+    private fun FlowLayoutResult.assertOrthogonalRoutes() {
+        routes.values.forEach { route ->
+            assertTrue(route.points.zipWithNext().all { (from, to) -> from.x == to.x || from.y == to.y })
+        }
+    }
+
+    private fun FlowLayoutResult.assertRoutesAvoidNodes(graph: FlowGraphDocument, gap: Double) {
+        routes.values.forEach { route ->
+            val edge = graph.edges.first { it.id == route.edgeId }
+            nodeBounds
+                .filterKeys { it != edge.sourceNodeId && it != edge.targetNodeId }
+                .values
+                .forEach { obstacle ->
+                    assertFalse(
+                        "route ${route.edgeId.value} intersects obstacle $obstacle via ${route.points}",
+                        route.segments.any { segment -> segment.intersects(obstacle, gap) },
+                    )
+                }
         }
     }
 }

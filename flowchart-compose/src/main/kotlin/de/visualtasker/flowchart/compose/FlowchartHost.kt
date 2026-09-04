@@ -339,9 +339,10 @@ private fun hitNodePort(
     view: FlowViewDocument,
     portWidthPx: Float,
     portHeightPx: Float,
+    magnetRadiusPx: Float,
 ): FlowchartNodePortHit? =
     flowNodePortHits(graph, view, portWidthPx, portHeightPx)
-        .filter { hit -> hit.bounds.inflate(14f).contains(offset) }
+        .filter { hit -> hit.bounds.inflate(magnetRadiusPx).contains(offset) }
         .minByOrNull { hit -> (hit.bounds.center - offset).getDistance() }
 
 private fun DrawScope.drawPortStack(
@@ -494,8 +495,9 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
     var panning by remember { mutableStateOf(false) }
     val currentView by rememberUpdatedState(view)
     val density = LocalDensity.current
-    val portWidthPx = with(density) { 34.dp.toPx() }
-    val portHeightPx = with(density) { 20.dp.toPx() }
+    val portWidthPx = with(density) { 46.dp.toPx() }
+    val portHeightPx = with(density) { 28.dp.toPx() }
+    val portMagnetRadiusPx = with(density) { 28.dp.toPx() }
     var previousTapAt by remember { mutableLongStateOf(0L) }
     var previousTapPosition by remember { mutableStateOf<Offset?>(null) }
     val modifier = Modifier.fillMaxSize().testTag("flowchart-gestures")
@@ -527,7 +529,7 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
                 val down = awaitFirstDown(requireUnconsumed = false)
                 val dragStart = awaitTouchSlopOrCancellation(down.id) { change, _ -> change.consume() }
                 if (dragStart != null) {
-                    val startPortHit = hitNodePort(down.position, graph, currentView, portWidthPx, portHeightPx)
+                    val startPortHit = hitNodePort(down.position, graph, currentView, portWidthPx, portHeightPx, portMagnetRadiusPx)
                         ?.takeUnless { it.ref.inputSide }
                     dragPort = startPortHit?.ref
                     dragPortAnchor = startPortHit?.bounds?.center
@@ -550,9 +552,9 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
                         if (change.positionChange() != Offset.Zero) change.consume()
                         val point = FlowPoint(change.position.x.toDouble(), change.position.y.toDouble())
                         if (dragPort != null) {
-                            dragPortPointer = change.position
-                            dragPortTarget = hitNodePort(change.position, graph, currentView, portWidthPx, portHeightPx)
+                            dragPortTarget = hitNodePort(change.position, graph, currentView, portWidthPx, portHeightPx, portMagnetRadiusPx)
                                 ?.takeIf { hit -> hit.ref.isCompatibleTargetFor(dragPort!!) }
+                            dragPortPointer = dragPortTarget?.bounds?.center ?: change.position
                         } else if (dragNode != null) {
                             controller.dispatch(FlowInteractionAction.UpdateNodeDrag(point))
                             callbacks.onNodeDragChanged(dragNode, point)
@@ -563,7 +565,7 @@ private fun FlowGestureLayer(graph: FlowGraphDocument, view: FlowViewDocument, c
                     if (completed) {
                         val sourcePort = dragPort
                         if (sourcePort != null) {
-                            val targetPort = hitNodePort(latestDragPosition, graph, currentView, portWidthPx, portHeightPx)
+                            val targetPort = hitNodePort(latestDragPosition, graph, currentView, portWidthPx, portHeightPx, portMagnetRadiusPx)
                                 ?.ref
                                 ?.takeIf { it.isCompatibleTargetFor(sourcePort) }
                             if (targetPort != null) {
