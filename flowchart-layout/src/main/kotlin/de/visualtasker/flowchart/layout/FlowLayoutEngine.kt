@@ -544,15 +544,20 @@ public object FlowLayoutEngine {
             .sortedByDescending { it.key.value }
             .forEach { (targetId, incoming) ->
                 val consumer = bounds[targetId] ?: return@forEach
-                incoming
+                val orderedIncoming = incoming
                     .sortedWith(compareBy<FlowGraphEdge> { if (it.kind == FlowEdgeKind.CONDITION) 0 else 1 }.thenBy { it.label.orEmpty() }.thenBy { it.id.value })
+                val valueColumnX = consumer.right + config.nodeSpacing * 0.62
+                val total = orderedIncoming.size
+                orderedIncoming
                     .forEachIndexed { index, edge ->
                         if (edge.sourceNodeId in pinnedNodeIds) return@forEachIndexed
                         val value = bounds[edge.sourceNodeId] ?: return@forEachIndexed
+                        val slotOffset = index - ((total - 1) / 2.0)
                         bounds[edge.sourceNodeId] = value.copy(
                             origin = FlowPoint(
-                                x = consumer.right + config.nodeSpacing + index * (value.size.width + config.nodeSpacing * 0.6),
-                                y = consumer.top + (consumer.size.height - value.size.height) / 2.0,
+                                x = valueColumnX,
+                                y = consumer.top + (consumer.size.height - value.size.height) / 2.0 +
+                                    slotOffset * (value.size.height + config.nodeSpacing * 0.32),
                             ),
                         )
                     }

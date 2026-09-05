@@ -257,13 +257,13 @@ private fun DrawScope.drawBackgroundFacetRegions(
                 else -> config.colorTokens.branchEdge
             }
             drawRoundRect(
-                color = color.copy(alpha = if (region.facet.id in collapsedFacetNodeIds) 0.13f else 0.07f),
+                color = color.copy(alpha = if (region.facet.id in collapsedFacetNodeIds) 0.10f else 0.035f),
                 topLeft = region.bounds.topLeft,
                 size = region.bounds.size,
                 cornerRadius = CornerRadius(14.dp.toPx(), 14.dp.toPx()),
             )
             drawRoundRect(
-                color = color.copy(alpha = if (region.facet.id in collapsedFacetNodeIds) 0.52f else 0.36f),
+                color = color.copy(alpha = if (region.facet.id in collapsedFacetNodeIds) 0.44f else 0.22f),
                 topLeft = region.bounds.topLeft,
                 size = region.bounds.size,
                 cornerRadius = CornerRadius(14.dp.toPx(), 14.dp.toPx()),

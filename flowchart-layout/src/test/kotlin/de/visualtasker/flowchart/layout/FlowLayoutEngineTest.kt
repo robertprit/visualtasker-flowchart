@@ -212,7 +212,7 @@ public class FlowLayoutEngineTest {
         assertEquals(targetBounds.top, route.points.last().y, 0.001)
     }
 
-    @Test public fun `value compare chain is placed horizontally near consumer`() {
+    @Test public fun `value compare chain is placed compactly near consumer`() {
         val graphNodes = listOf(
             FlowGraphNode(FlowNodeId("if"), FlowSemanticKind(FlowNodeKind.DECISION), "if"),
             FlowGraphNode(FlowNodeId("compare"), FlowSemanticKind(FlowNodeKind.DECISION), "compare"),
@@ -242,9 +242,9 @@ public class FlowLayoutEngineTest {
 
         assertTrue(compareBounds.left > ifBounds.right)
         assertTrue(leftBounds.left > compareBounds.right)
-        assertTrue(rightBounds.left > leftBounds.right)
-        assertEquals(compareBounds.top, leftBounds.top, 0.001)
-        assertEquals(compareBounds.top, rightBounds.top, 0.001)
+        assertEquals(leftBounds.left, rightBounds.left, 0.001)
+        assertTrue(leftBounds.top < compareBounds.top)
+        assertTrue(rightBounds.top > compareBounds.top)
     }
 
     @Test public fun `layout keeps minimum spacing between node rectangles`() {
@@ -370,6 +370,38 @@ public class FlowLayoutEngineTest {
         result.assertNoNodeOverlaps(gap = 1.0)
         result.assertOrthogonalRoutes()
         result.assertRoutesAvoidNodes(graph, gap = 1.0)
+    }
+
+    @Test public fun `value input nodes are stacked compactly beside their consumer`() {
+        val compare = FlowGraphNode(FlowNodeId("compare"), FlowSemanticKind(FlowNodeKind.DECISION), "compare")
+        val first = FlowGraphNode(FlowNodeId("first"), FlowSemanticKind(FlowNodeKind.INPUT), "first")
+        val second = FlowGraphNode(FlowNodeId("second"), FlowSemanticKind(FlowNodeKind.INPUT), "second")
+        val third = FlowGraphNode(FlowNodeId("third"), FlowSemanticKind(FlowNodeKind.INPUT), "third")
+        val graph = FlowGraphDocument(
+            documentId = FlowDocumentId("compact-values"),
+            documentRevision = FlowDocumentRevision("1"),
+            producerId = "fixture",
+            producerVersion = "1",
+            sourceRevision = "1",
+            sourceHash = "hash",
+            nodes = listOf(compare, first, second, third),
+            edges = listOf(
+                FlowGraphEdge(FlowEdgeId("first"), first.id, compare.id, FlowEdgeKind.DATA_FLOW, label = "Input1"),
+                FlowGraphEdge(FlowEdgeId("second"), second.id, compare.id, FlowEdgeKind.DATA_FLOW, label = "Input2"),
+                FlowGraphEdge(FlowEdgeId("third"), third.id, compare.id, FlowEdgeKind.DATA_FLOW, label = "Input3"),
+            ),
+        )
+
+        val result = FlowLayoutEngine.layout(graph)
+        val firstBounds = result.nodeBounds.getValue(first.id)
+        val secondBounds = result.nodeBounds.getValue(second.id)
+        val thirdBounds = result.nodeBounds.getValue(third.id)
+
+        assertEquals(firstBounds.left, secondBounds.left, 0.001)
+        assertEquals(secondBounds.left, thirdBounds.left, 0.001)
+        assertTrue(firstBounds.top < secondBounds.top)
+        assertTrue(secondBounds.top < thirdBounds.top)
+        result.assertNoNodeOverlaps(gap = 1.0)
     }
 
     @Test public fun `locked bend routes are normalized to orthogonal segments`() {
