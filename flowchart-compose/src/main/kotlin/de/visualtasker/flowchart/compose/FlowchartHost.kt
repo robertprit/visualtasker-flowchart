@@ -940,7 +940,7 @@ private fun FlowGestureLayer(
                     refresh()
                     return@awaitEachGesture
                 }
-                val startPortHit = hitNodePort(down.position, graph, currentView, portWidthPx, portHeightPx, portMagnetRadiusPx)
+                val startPortHit = hitNodePort(down.position, graph, currentView, portWidthPx, portHeightPx, magnetRadiusPx = 0f)
                         ?.takeUnless { it.ref.inputSide }
                         ?.takeUnless { it.ref.nodeId in hiddenNodeIds }
                 val nodeAtDown = if (startPortHit == null && config.nodeDraggingEnabled) {
