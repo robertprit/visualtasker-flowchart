@@ -41,6 +41,44 @@ public class FlowLayoutEngineTest {
         assertEquals(FlowRouteKind.WRAP_BEZIER, wrapRoute.kind)
     }
 
+    @Test public fun `semantic wrapped code flow starts control region in next column`() {
+        val graphNodes = listOf(
+            FlowGraphNode(FlowNodeId("start"), FlowSemanticKind(FlowNodeKind.ENTRY), "start"),
+            FlowGraphNode(FlowNodeId("a"), FlowSemanticKind(FlowNodeKind.ACTION), "a"),
+            FlowGraphNode(FlowNodeId("b"), FlowSemanticKind(FlowNodeKind.ACTION), "b"),
+            FlowGraphNode(FlowNodeId("c"), FlowSemanticKind(FlowNodeKind.ACTION), "c"),
+            FlowGraphNode(FlowNodeId("if"), FlowSemanticKind(FlowNodeKind.DECISION), "if"),
+            FlowGraphNode(FlowNodeId("after"), FlowSemanticKind(FlowNodeKind.ACTION), "after"),
+        )
+        val graph = FlowGraphDocument(
+            documentId = FlowDocumentId("semantic-wrap"),
+            documentRevision = FlowDocumentRevision("1"),
+            producerId = "fixture",
+            producerVersion = "1",
+            sourceRevision = "1",
+            sourceHash = "hash",
+            nodes = graphNodes,
+            edges = listOf(
+                FlowGraphEdge(FlowEdgeId("start-a"), FlowNodeId("start"), FlowNodeId("a"), FlowEdgeKind.SEQUENCE),
+                FlowGraphEdge(FlowEdgeId("a-b"), FlowNodeId("a"), FlowNodeId("b"), FlowEdgeKind.SEQUENCE),
+                FlowGraphEdge(FlowEdgeId("b-c"), FlowNodeId("b"), FlowNodeId("c"), FlowEdgeKind.SEQUENCE),
+                FlowGraphEdge(FlowEdgeId("c-if"), FlowNodeId("c"), FlowNodeId("if"), FlowEdgeKind.SEQUENCE),
+                FlowGraphEdge(FlowEdgeId("if-after"), FlowNodeId("if"), FlowNodeId("after"), FlowEdgeKind.LOOP_EXIT),
+            ),
+        )
+
+        val result = FlowLayoutEngine.layout(
+            graph,
+            config = FlowLayoutConfig(wrapAfterNodes = 6, semanticWrapEnabled = true),
+        )
+        val start = result.nodeBounds.getValue(FlowNodeId("start"))
+        val decision = result.nodeBounds.getValue(FlowNodeId("if"))
+
+        assertTrue(decision.left > start.right)
+        assertEquals(start.top, decision.top, 0.001)
+        assertEquals(FlowRouteKind.WRAP_BEZIER, result.routes.getValue(FlowEdgeId("c-if")).kind)
+    }
+
     @Test public fun `disconnected components and both orientations are finite`() {
         val graph = graph(listOf("a", "b", "c"), listOf("a" to "b"))
         FlowLayoutOrientation.values().forEach { orientation -> assertTrue(FlowLayoutEngine.layout(graph, config = FlowLayoutConfig(orientation = orientation)).isValid) }

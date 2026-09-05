@@ -14,6 +14,7 @@ public data class FlowLayoutConfig(
     public val componentSpacing: Double = 180.0,
     public val routingClearance: Double = 36.0,
     public val wrapAfterNodes: Int = 0,
+    public val semanticWrapEnabled: Boolean = false,
     public val crossingReductionSweeps: Int = 4,
     public val deterministicSeed: Long = 0L,
     public val syntheticNodePolicy: FlowSyntheticNodePolicy = FlowSyntheticNodePolicy.INCLUDE,

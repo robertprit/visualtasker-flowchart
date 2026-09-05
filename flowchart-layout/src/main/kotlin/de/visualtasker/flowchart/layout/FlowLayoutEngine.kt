@@ -513,7 +513,7 @@ public object FlowLayoutEngine {
     ) {
         if (config.wrapAfterNodes <= 0) return
         val chain = primarySequenceChain(nodes, edges)
-        if (chain.size <= config.wrapAfterNodes) return
+        if (chain.size <= config.wrapAfterNodes && !config.semanticWrapEnabled) return
         val movable = chain.filterNot { it in pinnedNodeIds }
         if (movable.isEmpty()) return
         val startX = chain.mapNotNull(bounds::get).minOfOrNull { it.left } ?: 0.0
@@ -522,19 +522,55 @@ public object FlowLayoutEngine {
         val rowHeight = chain.mapNotNull(bounds::get).maxOfOrNull { it.size.height } ?: 72.0
         val columnStride = columnWidth + config.nodeSpacing * 1.9
         val rowStride = rowHeight + config.layerSpacing * 0.52
-        chain.forEachIndexed { index, id ->
-            if (id in pinnedNodeIds) return@forEachIndexed
-            val rect = bounds[id] ?: return@forEachIndexed
-            val column = index / config.wrapAfterNodes
-            val row = index % config.wrapAfterNodes
+        val semanticKinds = nodes.associate { it.id to it.kind.standard }
+        val rows = wrappedRows(chain, semanticKinds, config)
+        chain.forEach { id ->
+            if (id in pinnedNodeIds) return@forEach
+            val rect = bounds[id] ?: return@forEach
+            val row = rows[id] ?: return@forEach
             bounds[id] = rect.copy(
                 origin = FlowPoint(
-                    x = startX + column * columnStride,
-                    y = startY + row * rowStride,
+                    x = startX + row.column * columnStride,
+                    y = startY + row.index * rowStride,
                 ),
             )
         }
     }
+
+    private data class WrappedRow(
+        val column: Int,
+        val index: Int,
+    )
+
+    private fun wrappedRows(
+        chain: List<FlowNodeId>,
+        semanticKinds: Map<FlowNodeId, FlowNodeKind?>,
+        config: FlowLayoutConfig,
+    ): Map<FlowNodeId, WrappedRow> {
+        val result = linkedMapOf<FlowNodeId, WrappedRow>()
+        var column = 0
+        var row = 0
+        val semanticBreakFloor = max(3, (config.wrapAfterNodes * 0.55).roundToInt())
+        chain.forEachIndexed { index, id ->
+            val startsSemanticRegion = config.semanticWrapEnabled &&
+                index > 0 &&
+                row >= semanticBreakFloor &&
+                semanticWrapBoundary(semanticKinds[id])
+            if (row >= config.wrapAfterNodes || startsSemanticRegion) {
+                column += 1
+                row = 0
+            }
+            result[id] = WrappedRow(column, row)
+            row += 1
+        }
+        return result
+    }
+
+    private fun semanticWrapBoundary(kind: FlowNodeKind?): Boolean =
+        kind == FlowNodeKind.DECISION ||
+            kind == FlowNodeKind.LOOP_START ||
+            kind == FlowNodeKind.LOOP_END ||
+            kind == FlowNodeKind.ANNOTATION
 
     private fun primarySequenceChain(
         nodes: List<FlowGraphNode>,
