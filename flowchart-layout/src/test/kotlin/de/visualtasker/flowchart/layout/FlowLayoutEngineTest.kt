@@ -27,6 +27,20 @@ public class FlowLayoutEngineTest {
         assertEquals(3, graph.nodes.size)
     }
 
+    @Test public fun `wrapped code flow continues in next column with bezier cable`() {
+        val ids = (0..13).map { "n$it" }
+        val graph = graph(ids, ids.zipWithNext())
+
+        val result = FlowLayoutEngine.layout(graph, config = FlowLayoutConfig(wrapAfterNodes = 5))
+        val first = result.nodeBounds.getValue(FlowNodeId("n0"))
+        val sixth = result.nodeBounds.getValue(FlowNodeId("n5"))
+        val wrapRoute = result.routes.getValue(FlowEdgeId("e4"))
+
+        assertTrue(sixth.left > first.right)
+        assertEquals(first.top, sixth.top, 0.001)
+        assertEquals(FlowRouteKind.WRAP_BEZIER, wrapRoute.kind)
+    }
+
     @Test public fun `disconnected components and both orientations are finite`() {
         val graph = graph(listOf("a", "b", "c"), listOf("a" to "b"))
         FlowLayoutOrientation.values().forEach { orientation -> assertTrue(FlowLayoutEngine.layout(graph, config = FlowLayoutConfig(orientation = orientation)).isValid) }

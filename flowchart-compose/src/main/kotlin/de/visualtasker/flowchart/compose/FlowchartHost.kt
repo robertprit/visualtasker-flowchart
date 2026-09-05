@@ -121,9 +121,9 @@ private fun FlowCanvas(
             .filterNot { edge -> edge.sourceNodeId in collapsedNodeIds || edge.targetNodeId in collapsedNodeIds }
             .mapNotNull { edge ->
                 val points = edgeGraphPoints(edge, graph, view).map(::screen)
-                if (points.size < 2) null else edge to points
+                if (points.size < 2) null else Triple(edge, points, edgeIsWrapCable(edge, graph, view))
             }
-        edgeRoutes.forEachIndexed { edgeIndex, (edge, points) ->
+        edgeRoutes.forEachIndexed { edgeIndex, (edge, points, isWrapCable) ->
             if (points.size < 2) return@forEachIndexed
             val traversed = edge.id in runtime?.traversedEdgeIds.orEmpty()
             val edgeColor = if (traversed) {
@@ -143,14 +143,32 @@ private fun FlowCanvas(
                 previousRoutes = edgeRoutes.take(edgeIndex).map { it.second },
                 minDistanceFromEnds = edgeStrokeWidth * 4f,
             )
-            points.zipWithNext().forEach { (a, b) ->
-                drawLine(
+            if (isWrapCable && points.size >= 4) {
+                drawPath(
+                    path = Path().apply {
+                        moveTo(points[0].x, points[0].y)
+                        cubicTo(
+                            points[1].x,
+                            points[1].y,
+                            points[2].x,
+                            points[2].y,
+                            points.last().x,
+                            points.last().y,
+                        )
+                    },
                     color = edgeColor,
-                    start = a,
-                    end = b,
-                    strokeWidth = edgeStrokeWidth,
-                    cap = StrokeCap.Round,
+                    style = Stroke(width = edgeStrokeWidth * 0.86f, cap = StrokeCap.Round),
                 )
+            } else {
+                points.zipWithNext().forEach { (a, b) ->
+                    drawLine(
+                        color = edgeColor,
+                        start = a,
+                        end = b,
+                        strokeWidth = edgeStrokeWidth,
+                        cap = StrokeCap.Round,
+                    )
+                }
             }
             bridges.forEach { bridge ->
                 drawCircle(
@@ -1328,8 +1346,30 @@ private fun edgeGraphPoints(edge: FlowGraphEdge, graph: FlowGraphDocument, view:
     if (edgeView?.routeLockState == FlowRouteLockState.LOCKED && edgeView.bendPoints.isNotEmpty()) {
         return orthogonalize(listOf(start) + edgeView.bendPoints + end)
     }
+    if (edgeIsWrapCable(edge, sourceRect, targetRect)) {
+        val lift = maxOf(52.0, minOf(132.0, sourceRect.size.height + 36.0))
+        return listOf(
+            start,
+            FlowPoint(sourceRect.right + 42.0, sourceRect.top - lift),
+            FlowPoint(targetRect.left - 42.0, targetRect.top - lift),
+            end,
+        )
+    }
     return automaticOrthogonalRoute(edge, start, end, sourceRect, targetRect, obstacles, laneIndex(edge, graph.edges))
 }
+
+private fun edgeIsWrapCable(edge: FlowGraphEdge, graph: FlowGraphDocument, view: FlowViewDocument): Boolean {
+    val source = view.nodeViews.firstOrNull { it.nodeId == edge.sourceNodeId } ?: return false
+    val target = view.nodeViews.firstOrNull { it.nodeId == edge.targetNodeId } ?: return false
+    val sourceRect = FlowRect(source.position, source.size ?: FlowSize(160.0, 72.0))
+    val targetRect = FlowRect(target.position, target.size ?: FlowSize(160.0, 72.0))
+    return edgeIsWrapCable(edge, sourceRect, targetRect)
+}
+
+private fun edgeIsWrapCable(edge: FlowGraphEdge, source: FlowRect, target: FlowRect): Boolean =
+    edge.kind in primaryFlowKinds &&
+        target.left > source.right &&
+        target.top + target.size.height < source.top + source.size.height
 
 private fun automaticOrthogonalRoute(
     edge: FlowGraphEdge,
@@ -1580,4 +1620,9 @@ private val sideInputKinds: Set<FlowEdgeKind> = setOf(
 private val routedLaneKinds: Set<FlowEdgeKind> = sideOutputKinds + setOf(
     FlowEdgeKind.LOOP_BODY,
     FlowEdgeKind.LOOP_BACK,
+)
+
+private val primaryFlowKinds: Set<FlowEdgeKind> = setOf(
+    FlowEdgeKind.SEQUENCE,
+    FlowEdgeKind.LOOP_EXIT,
 )

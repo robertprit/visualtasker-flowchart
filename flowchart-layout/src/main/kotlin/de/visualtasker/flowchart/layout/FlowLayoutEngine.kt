@@ -182,6 +182,21 @@ public object FlowLayoutEngine {
             return makeRoute(edge.id, FlowRouteKind.LOOP_BACK, points, true)
         }
         val rankDistance = kotlin.math.abs(ranks.getValue(edge.targetNodeId) - ranks.getValue(edge.sourceNodeId))
+        if (config.orientation == FlowLayoutOrientation.TOP_TO_BOTTOM &&
+            config.wrapAfterNodes > 0 &&
+            edge.kind in primaryFlowKinds &&
+            target.left > source.right &&
+            target.top + target.size.height < source.top + source.size.height
+        ) {
+            val lift = max(config.routingClearance * 1.8, config.layerSpacing * 0.42)
+            val points = listOf(
+                start,
+                FlowRoutePoint(source.right + config.nodeSpacing * 0.45, source.top - lift),
+                FlowRoutePoint(target.left - config.nodeSpacing * 0.45, target.top - lift),
+                end,
+            )
+            return makeRoute(edge.id, FlowRouteKind.WRAP_BEZIER, points, true)
+        }
         val directPoints = when (config.orientation) {
             FlowLayoutOrientation.TOP_TO_BOTTOM -> manhattanRoute(edge, start, end, source, target, obstacles, config, laneIndex = laneIndex)
             FlowLayoutOrientation.LEFT_TO_RIGHT -> { val mid = (start.x + end.x) / 2; listOf(start, FlowRoutePoint(mid, start.y), FlowRoutePoint(mid, end.y), end) }
@@ -484,7 +499,69 @@ public object FlowLayoutEngine {
                 alignValueInputs(edges, bounds, pinnedNodeIds, config)
             }
             alignJoinNodes(nodes, edges, bounds, pinnedNodeIds, config)
+            applyWrappedCodeFlow(nodes, edges, bounds, pinnedNodeIds, config)
+            alignValueInputs(edges, bounds, pinnedNodeIds, config)
         }
+    }
+
+    private fun applyWrappedCodeFlow(
+        nodes: List<FlowGraphNode>,
+        edges: List<FlowGraphEdge>,
+        bounds: MutableMap<FlowNodeId, FlowRect>,
+        pinnedNodeIds: Set<FlowNodeId>,
+        config: FlowLayoutConfig,
+    ) {
+        if (config.wrapAfterNodes <= 0) return
+        val chain = primarySequenceChain(nodes, edges)
+        if (chain.size <= config.wrapAfterNodes) return
+        val movable = chain.filterNot { it in pinnedNodeIds }
+        if (movable.isEmpty()) return
+        val startX = chain.mapNotNull(bounds::get).minOfOrNull { it.left } ?: 0.0
+        val startY = chain.mapNotNull(bounds::get).minOfOrNull { it.top } ?: 0.0
+        val columnWidth = chain.mapNotNull(bounds::get).maxOfOrNull { it.size.width } ?: 160.0
+        val rowHeight = chain.mapNotNull(bounds::get).maxOfOrNull { it.size.height } ?: 72.0
+        val columnStride = columnWidth + config.nodeSpacing * 1.9
+        val rowStride = rowHeight + config.layerSpacing * 0.52
+        chain.forEachIndexed { index, id ->
+            if (id in pinnedNodeIds) return@forEachIndexed
+            val rect = bounds[id] ?: return@forEachIndexed
+            val column = index / config.wrapAfterNodes
+            val row = index % config.wrapAfterNodes
+            bounds[id] = rect.copy(
+                origin = FlowPoint(
+                    x = startX + column * columnStride,
+                    y = startY + row * rowStride,
+                ),
+            )
+        }
+    }
+
+    private fun primarySequenceChain(
+        nodes: List<FlowGraphNode>,
+        edges: List<FlowGraphEdge>,
+    ): List<FlowNodeId> {
+        val nodeIds = nodes.map { it.id }.toSet()
+        val incoming = edges.filter { it.kind in primaryFlowKinds }.groupBy { it.targetNodeId }
+        val outgoing = edges.filter { it.kind in primaryFlowKinds }.groupBy { it.sourceNodeId }
+        val start = nodes
+            .firstOrNull { it.kind.standard == FlowNodeKind.ENTRY }
+            ?.id
+            ?: nodeIds
+                .filter { incoming[it].isNullOrEmpty() }
+                .minByOrNull { it.value }
+            ?: return emptyList()
+        val result = mutableListOf<FlowNodeId>()
+        val seen = mutableSetOf<FlowNodeId>()
+        var current: FlowNodeId? = start
+        while (current != null && seen.add(current)) {
+            result += current
+            current = outgoing[current]
+                .orEmpty()
+                .sortedWith(compareBy<FlowGraphEdge> { if (it.kind == FlowEdgeKind.SEQUENCE) 0 else 1 }.thenBy { it.id.value })
+                .firstOrNull { it.targetNodeId !in seen }
+                ?.targetNodeId
+        }
+        return result
     }
 
     private fun alignEntryNodes(
@@ -813,6 +890,11 @@ public object FlowLayoutEngine {
         FlowEdgeKind.SEQUENCE,
         FlowEdgeKind.LOOP_BODY,
         FlowEdgeKind.LOOP_BACK,
+    )
+
+    private val primaryFlowKinds: Set<FlowEdgeKind> = setOf(
+        FlowEdgeKind.SEQUENCE,
+        FlowEdgeKind.LOOP_EXIT,
     )
 
     private fun orthogonalize(points: List<FlowRoutePoint>): List<FlowRoutePoint> {

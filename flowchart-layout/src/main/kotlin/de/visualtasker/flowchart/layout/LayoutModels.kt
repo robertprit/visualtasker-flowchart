@@ -13,6 +13,7 @@ public data class FlowLayoutConfig(
     public val nodeSpacing: Double = 104.0,
     public val componentSpacing: Double = 180.0,
     public val routingClearance: Double = 36.0,
+    public val wrapAfterNodes: Int = 0,
     public val crossingReductionSweeps: Int = 4,
     public val deterministicSeed: Long = 0L,
     public val syntheticNodePolicy: FlowSyntheticNodePolicy = FlowSyntheticNodePolicy.INCLUDE,
@@ -20,12 +21,13 @@ public data class FlowLayoutConfig(
 ) {
     init {
         require(layerSpacing > 0 && nodeSpacing > 0 && componentSpacing > 0 && routingClearance >= 0)
+        require(wrapAfterNodes >= 0)
         require(crossingReductionSweeps >= 0)
     }
 }
 
 public data class FlowNodeMetrics(public val sizes: Map<FlowNodeId, FlowSize>, public val defaultSize: FlowSize = FlowSize(160.0, 72.0))
-public enum class FlowRouteKind { ORTHOGONAL, LOOP_BACK, BRANCH, DIRECT_FALLBACK }
+public enum class FlowRouteKind { ORTHOGONAL, LOOP_BACK, BRANCH, WRAP_BEZIER, DIRECT_FALLBACK }
 public data class FlowRoutePoint(public val x: Double, public val y: Double) { public fun asPoint(): FlowPoint = FlowPoint(x, y) }
 public data class FlowRouteSegment(public val start: FlowRoutePoint, public val end: FlowRoutePoint)
 public data class FlowRoute(public val edgeId: FlowEdgeId, public val kind: FlowRouteKind, public val points: List<FlowRoutePoint>, public val segments: List<FlowRouteSegment>, public val usesInternalDummyPoints: Boolean = false)
