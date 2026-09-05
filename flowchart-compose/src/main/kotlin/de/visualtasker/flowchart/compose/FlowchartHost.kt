@@ -629,8 +629,8 @@ private fun DrawScope.drawPortStack(
     config: FlowchartUiConfig,
 ) {
     if (ports.isEmpty()) return
-    val portWidth = 28.dp.toPx().coerceAtMost(size.width * 0.34f)
-    val portHeight = 12.dp.toPx()
+    val portWidth = 34.dp.toPx().coerceAtMost(size.width * 0.38f)
+    val portHeight = 16.dp.toPx()
     val gap = size.height / (ports.size + 1)
     val x = if (inputSide) origin.x - portWidth * 0.45f else origin.x + size.width - portWidth * 0.55f
     ports.forEachIndexed { index, port ->
@@ -784,9 +784,9 @@ private fun FlowGestureLayer(
     var panning by remember { mutableStateOf(false) }
     val currentView by rememberUpdatedState(view)
     val density = LocalDensity.current
-    val portWidthPx = with(density) { 46.dp.toPx() }
-    val portHeightPx = with(density) { 28.dp.toPx() }
-    val portMagnetRadiusPx = with(density) { 28.dp.toPx() }
+    val portWidthPx = with(density) { 60.dp.toPx() }
+    val portHeightPx = with(density) { 36.dp.toPx() }
+    val portMagnetRadiusPx = with(density) { 44.dp.toPx() }
     val platformView = LocalView.current
     val hapticFeedback = LocalHapticFeedback.current
     var previousTapAt by remember { mutableLongStateOf(0L) }
