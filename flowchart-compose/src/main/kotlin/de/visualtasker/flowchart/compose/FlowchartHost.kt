@@ -786,7 +786,7 @@ private fun FlowGestureLayer(
     val density = LocalDensity.current
     val portWidthPx = with(density) { 60.dp.toPx() }
     val portHeightPx = with(density) { 36.dp.toPx() }
-    val portMagnetRadiusPx = with(density) { 44.dp.toPx() }
+    val portMagnetRadiusPx = with(density) { 56.dp.toPx() }
     val platformView = LocalView.current
     val hapticFeedback = LocalHapticFeedback.current
     var previousTapAt by remember { mutableLongStateOf(0L) }
@@ -1226,8 +1226,18 @@ private fun automaticOrthogonalRoute(
     }.map { it.compactOrthogonalPoints() }
     return candidates
         .filterNot { collides(it, obstacles, clearance) }
-        .minByOrNull(::routeLength)
-        ?: candidates.minBy(::routeLength)
+        .minWithOrNull(
+            compareBy<List<FlowPoint>> { directionPenalty(edge, it) }
+                .thenBy(::routeLength)
+                .thenBy { bendCount(it) }
+        )
+        ?: candidates.minWithOrNull(
+            compareBy<List<FlowPoint>> { collisionCount(it, obstacles, clearance) }
+                .thenBy { directionPenalty(edge, it) }
+                .thenBy(::routeLength)
+                .thenBy { bendCount(it) }
+        )
+        ?: listOf(start, end)
 }
 
 private fun laneIndex(edge: FlowGraphEdge, edges: List<FlowGraphEdge>): Int {
@@ -1256,19 +1266,7 @@ private fun edgeKindOrder(kind: FlowEdgeKind): Int = when (kind) {
 
 private fun collides(points: List<FlowPoint>, obstacles: Collection<FlowRect>, clearance: Double): Boolean =
     points.zipWithNext().any { (start, end) ->
-        obstacles.any { rect ->
-            val left = rect.left - clearance
-            val right = rect.right + clearance
-            val top = rect.top - clearance
-            val bottom = rect.bottom + clearance
-            if (start.x == end.x) {
-                start.x in left..right && rangesOverlap(start.y, end.y, top, bottom)
-            } else if (start.y == end.y) {
-                start.y in top..bottom && rangesOverlap(start.x, end.x, left, right)
-            } else {
-                true
-            }
-        }
+        obstacles.any { rect -> segmentIntersects(start, end, rect, clearance) }
     }
 
 private fun rangesOverlap(a: Double, b: Double, low: Double, high: Double): Boolean =
@@ -1278,6 +1276,31 @@ private fun routeLength(points: List<FlowPoint>): Double =
     points.zipWithNext().sumOf { (from, to) ->
         kotlin.math.abs(from.x - to.x) + kotlin.math.abs(from.y - to.y)
     }
+
+private fun bendCount(points: List<FlowPoint>): Int =
+    points.compactOrthogonalPoints().size.coerceAtLeast(2) - 2
+
+private fun collisionCount(points: List<FlowPoint>, obstacles: Collection<FlowRect>, clearance: Double): Int =
+    points.zipWithNext().sumOf { (start, end) ->
+        obstacles.count { rect -> segmentIntersects(start, end, rect, clearance) }
+    }
+
+private fun directionPenalty(edge: FlowGraphEdge, points: List<FlowPoint>): Int =
+    if (edge.kind in sideOutputKinds && points.any { it.x < points.first().x }) 1 else 0
+
+private fun segmentIntersects(start: FlowPoint, end: FlowPoint, rect: FlowRect, clearance: Double): Boolean {
+    val left = rect.left - clearance
+    val right = rect.right + clearance
+    val top = rect.top - clearance
+    val bottom = rect.bottom + clearance
+    return if (start.x == end.x) {
+        start.x in left..right && rangesOverlap(start.y, end.y, top, bottom)
+    } else if (start.y == end.y) {
+        start.y in top..bottom && rangesOverlap(start.x, end.x, left, right)
+    } else {
+        true
+    }
+}
 
 private fun orthogonalize(points: List<FlowPoint>): List<FlowPoint> {
     if (points.size < 2) return points

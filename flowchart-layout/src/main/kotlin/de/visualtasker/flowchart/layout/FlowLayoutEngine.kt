@@ -388,11 +388,16 @@ public object FlowLayoutEngine {
     ): List<FlowRoutePoint> =
         candidates
             .filterNot { collides(it, obstacles, clearance) }
-            .minWithOrNull(compareBy<List<FlowRoutePoint>> { bendCount(it) }.thenBy(::routeLength))
+            .minWithOrNull(
+                compareBy<List<FlowRoutePoint>> { directionPenalty(edge, it) }
+                    .thenBy(::routeLength)
+                    .thenBy { bendCount(it) }
+            )
             ?: candidates.minWithOrNull(
                 compareBy<List<FlowRoutePoint>> { collisionCount(it, obstacles, clearance) }
                     .thenBy { directionPenalty(edge, it) }
                     .thenBy(::routeLength)
+                    .thenBy { bendCount(it) }
             )
             ?: listOf()
 
