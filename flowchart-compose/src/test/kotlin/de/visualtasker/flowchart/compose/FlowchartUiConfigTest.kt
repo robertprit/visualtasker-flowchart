@@ -6,7 +6,9 @@ import androidx.compose.ui.graphics.Path
 import de.visualtasker.flowchart.domain.FlowEdgeKind
 import de.visualtasker.flowchart.domain.FlowDocumentId
 import de.visualtasker.flowchart.domain.FlowDocumentRevision
+import de.visualtasker.flowchart.domain.FlowEdgeId
 import de.visualtasker.flowchart.domain.FlowGraphDocument
+import de.visualtasker.flowchart.domain.FlowGraphEdge
 import de.visualtasker.flowchart.domain.FlowGraphNode
 import de.visualtasker.flowchart.domain.FlowNodeId
 import de.visualtasker.flowchart.domain.FlowNodeKind
@@ -211,6 +213,22 @@ public class FlowchartUiConfigTest {
         assertEquals(FlowchartEdgeVisualCategory.LOOP, categories.getValue(FlowEdgeKind.LOOP_BACK))
         assertEquals(FlowchartEdgeVisualCategory.ERROR, categories.getValue(FlowEdgeKind.ERROR))
         assertEquals(FlowchartEdgeVisualCategory.DEFAULT, categories.getValue(FlowEdgeKind.SEQUENCE))
+    }
+
+    @Test
+    public fun `dataflow layer hides only data edges`() {
+        val sequence = FlowGraphEdge(FlowEdgeId("sequence"), FlowNodeId("a"), FlowNodeId("b"), FlowEdgeKind.SEQUENCE)
+        val branch = FlowGraphEdge(FlowEdgeId("branch"), FlowNodeId("b"), FlowNodeId("c"), FlowEdgeKind.TRUE_BRANCH)
+        val data = FlowGraphEdge(FlowEdgeId("data"), FlowNodeId("x"), FlowNodeId("b"), FlowEdgeKind.DATA_FLOW)
+        val condition = FlowGraphEdge(FlowEdgeId("condition"), FlowNodeId("x"), FlowNodeId("b"), FlowEdgeKind.CONDITION)
+        val loop = FlowGraphEdge(FlowEdgeId("loop"), FlowNodeId("c"), FlowNodeId("b"), FlowEdgeKind.LOOP_BACK)
+        val edges = listOf(sequence, branch, data, condition, loop)
+
+        assertEquals(edges, flowchartVisibleEdges(edges, FlowchartUiConfig(dataFlowEdgesEnabled = true)))
+        assertEquals(
+            listOf(sequence, branch, condition, loop),
+            flowchartVisibleEdges(edges, FlowchartUiConfig(dataFlowEdgesEnabled = false)),
+        )
     }
 
     @Test

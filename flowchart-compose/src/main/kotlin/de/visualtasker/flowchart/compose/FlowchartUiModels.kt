@@ -91,6 +91,7 @@ public data class FlowchartUiConfig(
     public val edgeSelectionEnabled: Boolean = true,
     public val runtimeOverlayEnabled: Boolean = true,
     public val diagnosticMarkersEnabled: Boolean = true,
+    public val dataFlowEdgesEnabled: Boolean = true,
     public val controlsEnabled: Boolean = true,
     public val minimapEnabled: Boolean = false,
     public val soundEffectsEnabled: Boolean = false,
