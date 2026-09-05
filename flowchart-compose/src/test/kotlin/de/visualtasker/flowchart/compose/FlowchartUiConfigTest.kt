@@ -234,10 +234,31 @@ public class FlowchartUiConfigTest {
             label = "Feedback",
             properties = mapOf("blockType" to FlowSemanticValue.StringValue("feedback.beep")),
         )
+        val actionNode = FlowGraphNode(
+            id = FlowNodeId("action"),
+            kind = FlowSemanticKind(FlowNodeKind.ACTION),
+            label = "Action",
+            properties = mapOf("blockType" to FlowSemanticValue.StringValue("action.clickText")),
+        )
+        val chromeNode = FlowGraphNode(
+            id = FlowNodeId("chrome"),
+            kind = FlowSemanticKind(FlowNodeKind.ACTION),
+            label = "Chrome",
+            properties = mapOf("blockType" to FlowSemanticValue.StringValue("chromeTab.open")),
+        )
+        val noBlockTypeAction = FlowGraphNode(
+            id = FlowNodeId("kind-action"),
+            kind = FlowSemanticKind(FlowNodeKind.ACTION),
+            label = "Kind Action",
+            properties = emptyMap(),
+        )
 
         assertEquals(tokens.logicNodeFill, flowNodeFillColor(logicNode, tokens))
         assertEquals(tokens.variableNodeFill, flowNodeFillColor(variableNode, tokens))
         assertEquals(tokens.feedbackNodeFill, flowNodeFillColor(feedbackNode, tokens))
+        assertEquals(tokens.actionNodeFill, flowNodeFillColor(actionNode, tokens))
+        assertEquals(tokens.chromeTabNodeFill, flowNodeFillColor(chromeNode, tokens))
+        assertEquals(tokens.actionNodeFill, flowNodeFillColor(noBlockTypeAction, tokens))
     }
 
     @Test

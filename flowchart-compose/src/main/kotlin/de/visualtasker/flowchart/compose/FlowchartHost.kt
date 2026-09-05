@@ -815,12 +815,37 @@ internal fun flowNodeFillColor(
 ): androidx.compose.ui.graphics.Color {
     val blockType = (node.properties["blockType"] as? FlowSemanticValue.StringValue)?.value
     return when {
-        blockType == null -> tokens.nodeFill
+        blockType == null -> when (node.kind.standard) {
+            FlowNodeKind.ENTRY,
+            FlowNodeKind.EXIT -> tokens.eventNodeFill
+            FlowNodeKind.ACTION -> tokens.actionNodeFill
+            FlowNodeKind.DECISION -> tokens.logicNodeFill
+            FlowNodeKind.LOOP_START,
+            FlowNodeKind.LOOP_END -> tokens.controlNodeFill
+            FlowNodeKind.ASSIGNMENT,
+            FlowNodeKind.PROPERTY_ACCESS -> tokens.variableNodeFill
+            FlowNodeKind.INPUT,
+            FlowNodeKind.OUTPUT -> tokens.inputNodeFill
+            else -> tokens.nodeFill
+        }
         blockType.startsWith("event.") -> tokens.eventNodeFill
+        blockType.startsWith("action.") -> tokens.actionNodeFill
         blockType.startsWith("control.") -> tokens.controlNodeFill
         blockType.startsWith("logic.") || blockType.startsWith("literal.") -> tokens.logicNodeFill
         blockType.startsWith("variable.") || blockType.startsWith("variables.") -> tokens.variableNodeFill
         blockType.startsWith("feedback.") -> tokens.feedbackNodeFill
+        blockType.startsWith("input.") -> tokens.inputNodeFill
+        blockType.startsWith("perception.") || blockType.startsWith("vision.") -> tokens.perceptionNodeFill
+        blockType.startsWith("text.") -> tokens.textNodeFill
+        blockType.startsWith("file.") -> tokens.fileNodeFill
+        blockType.startsWith("system.") -> tokens.systemNodeFill
+        blockType.startsWith("chromeTab.") -> tokens.chromeTabNodeFill
+        blockType.startsWith("tasker.") -> tokens.taskerNodeFill
+        blockType.startsWith("termux.") || blockType.startsWith("shizuku.") || blockType.startsWith("scrcpy.") -> tokens.shellNodeFill
+        blockType.startsWith("charts.") -> tokens.chartNodeFill
+        blockType.startsWith("runtime.") -> tokens.runtimeNodeFill
+        blockType.startsWith("debug.") -> tokens.debugNodeFill
+        blockType.startsWith("emscript.command.") -> tokens.actionNodeFill
         else -> tokens.nodeFill
     }
 }
