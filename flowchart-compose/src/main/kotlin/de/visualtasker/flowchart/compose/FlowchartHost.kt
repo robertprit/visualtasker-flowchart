@@ -1181,7 +1181,7 @@ internal fun FlowchartNodePortRef.isCompatibleTargetFor(source: FlowchartNodePor
     inputSide &&
         !source.inputSide &&
         nodeId != source.nodeId &&
-        kind == source.kind
+        (kind == source.kind || (kind == FlowEdgeKind.CONDITION && source.kind == FlowEdgeKind.DATA_FLOW))
 
 internal fun portDragPreviewRoute(
     start: Offset,

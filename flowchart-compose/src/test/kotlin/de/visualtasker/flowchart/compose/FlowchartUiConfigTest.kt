@@ -196,7 +196,7 @@ public class FlowchartUiConfigTest {
 
         assertTrue(target.isCompatibleTargetFor(source))
         assertFalse(sameNode.isCompatibleTargetFor(source))
-        assertFalse(wrongKind.isCompatibleTargetFor(source))
+        assertTrue(wrongKind.isCompatibleTargetFor(source))
         assertFalse(outputTarget.isCompatibleTargetFor(source))
     }
 
@@ -348,6 +348,68 @@ public class FlowchartUiConfigTest {
         assertTrue(hits[1].ref.inputSide)
         assertTrue(hits[0].bounds.contains(Offset(60f, 78f)))
         assertTrue(hits[1].bounds.contains(Offset(230f, 18f)))
+    }
+
+    @Test
+    public fun `reporter node ports use left inputs and right output`() {
+        val reporter = FlowGraphNode(
+            id = FlowNodeId("reporter"),
+            kind = FlowSemanticKind(FlowNodeKind.INPUT),
+            label = "Compare",
+            properties = mapOf(
+                "inputPorts" to FlowSemanticValue.ListValue(
+                    listOf(
+                        FlowSemanticValue.ObjectValue(
+                            mapOf(
+                                "name" to FlowSemanticValue.StringValue("Input1"),
+                                "label" to FlowSemanticValue.StringValue("Input1"),
+                                "kind" to FlowSemanticValue.StringValue(FlowEdgeKind.DATA_FLOW.name),
+                            ),
+                        ),
+                        FlowSemanticValue.ObjectValue(
+                            mapOf(
+                                "name" to FlowSemanticValue.StringValue("Input2"),
+                                "label" to FlowSemanticValue.StringValue("Input2"),
+                                "kind" to FlowSemanticValue.StringValue(FlowEdgeKind.DATA_FLOW.name),
+                            ),
+                        ),
+                    ),
+                ),
+                "outputPorts" to FlowSemanticValue.ListValue(
+                    listOf(
+                        FlowSemanticValue.ObjectValue(
+                            mapOf(
+                                "name" to FlowSemanticValue.StringValue("output"),
+                                "label" to FlowSemanticValue.StringValue("Output"),
+                                "kind" to FlowSemanticValue.StringValue(FlowEdgeKind.DATA_FLOW.name),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val graph = FlowGraphDocument(
+            documentId = FlowDocumentId("reporter-doc"),
+            documentRevision = FlowDocumentRevision("1"),
+            producerId = "test",
+            producerVersion = "1",
+            sourceRevision = "1",
+            sourceHash = "hash",
+            nodes = listOf(reporter),
+        )
+        val view = FlowViewDocument(
+            documentId = graph.documentId,
+            compatibleDocumentRevision = graph.documentRevision,
+            surfaceId = FlowSurfaceId("surface"),
+            nodeViews = listOf(FlowNodeView(reporter.id, FlowPoint(100.0, 80.0), FlowSize(120.0, 56.0))),
+        )
+
+        val hits = flowNodePortHits(graph, view, portWidthPx = 24f, portHeightPx = 10f)
+
+        assertEquals(3, hits.size)
+        assertTrue(hits.first { it.ref.portName == "Input1" }.bounds.contains(Offset(96f, 99f)))
+        assertTrue(hits.first { it.ref.portName == "Input2" }.bounds.contains(Offset(96f, 117f)))
+        assertTrue(hits.first { it.ref.portName == "output" }.bounds.contains(Offset(218f, 108f)))
     }
 
     @Test
