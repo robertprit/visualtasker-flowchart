@@ -751,6 +751,26 @@ private fun portColor(kind: FlowEdgeKind, tokens: FlowchartColorTokens): Color =
         FlowchartEdgeVisualCategory.ERROR -> tokens.errorEdge
     }
 
+private fun flowchartAutoPanDelta(
+    point: Offset,
+    canvasSize: androidx.compose.ui.unit.IntSize,
+    edgePx: Float = 72f,
+    stepPx: Float = 24f,
+): Offset {
+    if (canvasSize.width <= edgePx * 2f || canvasSize.height <= edgePx * 2f) return Offset.Zero
+    val panX = when {
+        point.x < edgePx -> stepPx
+        point.x > canvasSize.width - edgePx -> -stepPx
+        else -> 0f
+    }
+    val panY = when {
+        point.y < edgePx -> stepPx
+        point.y > canvasSize.height - edgePx -> -stepPx
+        else -> 0f
+    }
+    return Offset(panX, panY)
+}
+
 internal fun resolveNodeShape(
     provider: FlowchartNodeShapeProvider?,
     node: FlowGraphNode,
@@ -978,8 +998,28 @@ private fun FlowGestureLayer(
                                 ?.takeIf { hit -> hit.ref.isCompatibleTargetFor(dragPort!!) }
                             dragPortPointer = dragPortTarget?.bounds?.center ?: change.position
                         } else if (dragNode != null || dragFacet != null) {
-                            controller.dispatch(FlowInteractionAction.UpdateNodeDrag(point))
-                            callbacks.onNodeDragChanged(dragNode, point)
+                            val autoPan = flowchartAutoPanDelta(change.position, size)
+                            if (autoPan != Offset.Zero) {
+                                val current = controller.snapshot().view ?: currentView
+                                controller.replaceViewport(
+                                    current.viewport.copy(
+                                        pan = FlowPoint(
+                                            x = current.viewport.pan.x + autoPan.x.toDouble(),
+                                            y = current.viewport.pan.y + autoPan.y.toDouble(),
+                                        ),
+                                    ),
+                                )
+                            }
+                            val effectivePoint = if (autoPan == Offset.Zero) {
+                                point
+                            } else {
+                                FlowPoint(
+                                    x = (change.position.x - autoPan.x).toDouble(),
+                                    y = (change.position.y - autoPan.y).toDouble(),
+                                )
+                            }
+                            controller.dispatch(FlowInteractionAction.UpdateNodeDrag(effectivePoint))
+                            callbacks.onNodeDragChanged(dragNode, effectivePoint)
                         }
                         else if (panning) controller.dispatch(FlowInteractionAction.UpdateViewportPan(point))
                         refresh()
