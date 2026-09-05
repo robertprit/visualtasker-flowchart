@@ -19,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
@@ -507,8 +508,15 @@ internal data class FlowchartNodePort(
 
 internal data class FlowchartNodePortHit(
     val ref: FlowchartNodePortRef,
-    val bounds: androidx.compose.ui.geometry.Rect,
+    val bounds: Rect,
 )
+
+private enum class FlowchartPortSide {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
 
 internal fun flowNodePorts(
     node: FlowGraphNode,
@@ -586,26 +594,81 @@ private fun flowNodePortHitsForSide(
 ): List<FlowchartNodePortHit> {
     val ports = flowNodePorts(node, if (inputSide) "inputPorts" else "outputPorts")
     if (ports.isEmpty()) return emptyList()
-    val width = portWidthPx.coerceAtMost(size.width * 0.22f).coerceAtLeast(1f)
-    val height = portHeightPx.coerceAtLeast(1f)
-    val gap = size.height / (ports.size + 1)
-    val x = if (inputSide) origin.x - width * 0.45f else origin.x + size.width - width * 0.55f
-    return ports.mapIndexed { index, port ->
-        val y = origin.y + gap * (index + 1) - height / 2f
-        FlowchartNodePortHit(
-            ref = FlowchartNodePortRef(
-                nodeId = node.id,
-                portName = port.name,
-                kind = port.kind,
-                inputSide = inputSide,
-            ),
-            bounds = androidx.compose.ui.geometry.Rect(
+    return ports
+        .withIndex()
+        .groupBy { portSide(it.value, inputSide) }
+        .flatMap { (side, indexedPorts) ->
+            indexedPorts.mapIndexed { sideIndex, indexedPort ->
+                FlowchartNodePortHit(
+                    ref = FlowchartNodePortRef(
+                        nodeId = node.id,
+                        portName = indexedPort.value.name,
+                        kind = indexedPort.value.kind,
+                        inputSide = inputSide,
+                    ),
+                    bounds = portBounds(
+                        origin = origin,
+                        size = size,
+                        side = side,
+                        sideIndex = sideIndex,
+                        sideCount = indexedPorts.size,
+                        portWidthPx = portWidthPx,
+                        portHeightPx = portHeightPx,
+                    ),
+                )
+            }
+        }
+        .sortedBy { ports.indexOfFirst { port -> port.name == it.ref.portName } }
+}
+
+private fun portBounds(
+    origin: Offset,
+    size: Size,
+    side: FlowchartPortSide,
+    sideIndex: Int,
+    sideCount: Int,
+    portWidthPx: Float,
+    portHeightPx: Float,
+): Rect {
+    val verticalWidth = portWidthPx.coerceAtMost(size.width * 0.34f).coerceAtLeast(1f)
+    val verticalHeight = portHeightPx.coerceAtLeast(1f)
+    val horizontalWidth = portWidthPx.coerceAtMost(size.width * 0.46f).coerceAtLeast(1f)
+    val horizontalHeight = portHeightPx.coerceAtLeast(1f)
+    return when (side) {
+        FlowchartPortSide.Left,
+        FlowchartPortSide.Right,
+        -> {
+            val gap = size.height / (sideCount + 1)
+            val x = if (side == FlowchartPortSide.Left) {
+                origin.x - verticalWidth * 0.48f
+            } else {
+                origin.x + size.width - verticalWidth * 0.52f
+            }
+            val y = origin.y + gap * (sideIndex + 1) - verticalHeight / 2f
+            Rect(
                 left = x,
                 top = y,
-                right = x + width,
-                bottom = y + height,
-            ),
-        )
+                right = x + verticalWidth,
+                bottom = y + verticalHeight,
+            )
+        }
+        FlowchartPortSide.Top,
+        FlowchartPortSide.Bottom,
+        -> {
+            val gap = size.width / (sideCount + 1)
+            val x = origin.x + gap * (sideIndex + 1) - horizontalWidth / 2f
+            val y = if (side == FlowchartPortSide.Top) {
+                origin.y - horizontalHeight * 0.48f
+            } else {
+                origin.y + size.height - horizontalHeight * 0.52f
+            }
+            Rect(
+                left = x,
+                top = y,
+                right = x + horizontalWidth,
+                bottom = y + horizontalHeight,
+            )
+        }
     }
 }
 
@@ -629,28 +692,55 @@ private fun DrawScope.drawPortStack(
     config: FlowchartUiConfig,
 ) {
     if (ports.isEmpty()) return
-    val portWidth = 34.dp.toPx().coerceAtMost(size.width * 0.38f)
-    val portHeight = 16.dp.toPx()
-    val gap = size.height / (ports.size + 1)
-    val x = if (inputSide) origin.x - portWidth * 0.45f else origin.x + size.width - portWidth * 0.55f
-    ports.forEachIndexed { index, port ->
-        val y = origin.y + gap * (index + 1) - portHeight / 2f
-        val color = portColor(port.kind, config.colorTokens)
-        drawRoundRect(
-            color = color.copy(alpha = 0.92f),
-            topLeft = Offset(x, y),
-            size = Size(portWidth, portHeight),
-            cornerRadius = CornerRadius(portHeight / 2f, portHeight / 2f),
-        )
-        drawRoundRect(
-            color = Color.White.copy(alpha = 0.64f),
-            topLeft = Offset(x, y),
-            size = Size(portWidth, portHeight),
-            cornerRadius = CornerRadius(portHeight / 2f, portHeight / 2f),
-            style = Stroke(1.dp.toPx()),
-        )
-    }
+    val portWidth = 42.dp.toPx()
+    val portHeight = 18.dp.toPx()
+    ports
+        .withIndex()
+        .groupBy { portSide(it.value, inputSide) }
+        .forEach { (side, indexedPorts) ->
+            indexedPorts.forEachIndexed { sideIndex, indexedPort ->
+                val bounds = portBounds(
+                    origin = origin,
+                    size = size,
+                    side = side,
+                    sideIndex = sideIndex,
+                    sideCount = indexedPorts.size,
+                    portWidthPx = portWidth,
+                    portHeightPx = portHeight,
+                )
+                val color = portColor(indexedPort.value.kind, config.colorTokens)
+                drawRoundRect(
+                    color = color.copy(alpha = 0.92f),
+                    topLeft = bounds.topLeft,
+                    size = bounds.size,
+                    cornerRadius = CornerRadius(bounds.height / 2f, bounds.height / 2f),
+                )
+                drawRoundRect(
+                    color = Color.White.copy(alpha = 0.72f),
+                    topLeft = bounds.topLeft,
+                    size = bounds.size,
+                    cornerRadius = CornerRadius(bounds.height / 2f, bounds.height / 2f),
+                    style = Stroke(1.25.dp.toPx()),
+                )
+            }
+        }
 }
+
+private fun portSide(port: FlowchartNodePort, inputSide: Boolean): FlowchartPortSide =
+    if (inputSide) {
+        when {
+            port.name.equals("previous", ignoreCase = true) -> FlowchartPortSide.Top
+            port.kind == FlowEdgeKind.CONDITION || port.kind == FlowEdgeKind.DATA_FLOW -> FlowchartPortSide.Left
+            else -> FlowchartPortSide.Top
+        }
+    } else {
+        when {
+            port.name.equals("next", ignoreCase = true) -> FlowchartPortSide.Bottom
+            port.kind == FlowEdgeKind.SEQUENCE || port.kind == FlowEdgeKind.LOOP_EXIT -> FlowchartPortSide.Bottom
+            port.kind == FlowEdgeKind.LOOP_BODY || port.kind == FlowEdgeKind.LOOP_BACK -> FlowchartPortSide.Left
+            else -> FlowchartPortSide.Right
+        }
+    }
 
 private fun portColor(kind: FlowEdgeKind, tokens: FlowchartColorTokens): Color =
     when (flowEdgeVisualCategory(kind)) {
@@ -784,9 +874,9 @@ private fun FlowGestureLayer(
     var panning by remember { mutableStateOf(false) }
     val currentView by rememberUpdatedState(view)
     val density = LocalDensity.current
-    val portWidthPx = with(density) { 60.dp.toPx() }
-    val portHeightPx = with(density) { 36.dp.toPx() }
-    val portMagnetRadiusPx = with(density) { 56.dp.toPx() }
+    val portWidthPx = with(density) { 72.dp.toPx() }
+    val portHeightPx = with(density) { 44.dp.toPx() }
+    val portMagnetRadiusPx = with(density) { 72.dp.toPx() }
     val platformView = LocalView.current
     val hapticFeedback = LocalHapticFeedback.current
     var previousTapAt by remember { mutableLongStateOf(0L) }
@@ -1383,11 +1473,28 @@ private fun sidePort(
     name ?: return null
     val ports = flowNodePorts(node, key)
     val index = ports.indexOfFirst { it.name == name }.takeIf { it >= 0 } ?: return null
-    val gap = rect.size.height / (ports.size + 1)
-    return FlowPoint(
-        x = if (inputSide) rect.left else rect.right,
-        y = rect.top + gap * (index + 1),
-    )
+    val port = ports[index]
+    val portsOnSide = ports.filter { portSide(it, inputSide) == portSide(port, inputSide) }
+    val sideIndex = portsOnSide.indexOfFirst { it.name == name }.takeIf { it >= 0 } ?: 0
+    val side = portSide(port, inputSide)
+    return when (side) {
+        FlowchartPortSide.Left -> {
+            val gap = rect.size.height / (portsOnSide.size + 1)
+            FlowPoint(rect.left, rect.top + gap * (sideIndex + 1))
+        }
+        FlowchartPortSide.Right -> {
+            val gap = rect.size.height / (portsOnSide.size + 1)
+            FlowPoint(rect.right, rect.top + gap * (sideIndex + 1))
+        }
+        FlowchartPortSide.Top -> {
+            val gap = rect.size.width / (portsOnSide.size + 1)
+            FlowPoint(rect.left + gap * (sideIndex + 1), rect.top)
+        }
+        FlowchartPortSide.Bottom -> {
+            val gap = rect.size.width / (portsOnSide.size + 1)
+            FlowPoint(rect.left + gap * (sideIndex + 1), rect.bottom)
+        }
+    }
 }
 
 private val sideOutputKinds: Set<FlowEdgeKind> = setOf(

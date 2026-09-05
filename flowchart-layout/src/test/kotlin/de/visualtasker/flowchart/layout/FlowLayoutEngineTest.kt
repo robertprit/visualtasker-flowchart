@@ -162,6 +162,56 @@ public class FlowLayoutEngineTest {
         assertEquals(target.top, route.points.last().y, 0.001)
     }
 
+    @Test public fun `top down declared sequence ports use bottom and top anchors`() {
+        val source = FlowGraphNode(
+            id = FlowNodeId("start"),
+            kind = FlowSemanticKind(FlowNodeKind.ENTRY),
+            label = "start",
+            properties = mapOf("outputPorts" to ports("next")),
+        )
+        val target = FlowGraphNode(
+            id = FlowNodeId("wait"),
+            kind = FlowSemanticKind(FlowNodeKind.ACTION),
+            label = "wait",
+            properties = mapOf("inputPorts" to ports("previous")),
+        )
+        val graph = FlowGraphDocument(
+            documentId = FlowDocumentId("sequence-ports"),
+            documentRevision = FlowDocumentRevision("1"),
+            producerId = "fixture",
+            producerVersion = "1",
+            sourceRevision = "1",
+            sourceHash = "hash",
+            nodes = listOf(source, target),
+            edges = listOf(
+                FlowGraphEdge(
+                    id = FlowEdgeId("next-edge"),
+                    sourceNodeId = source.id,
+                    targetNodeId = target.id,
+                    kind = FlowEdgeKind.SEQUENCE,
+                )
+            ),
+        )
+
+        val result = FlowLayoutEngine.layout(
+            graph,
+            nodeMetrics = FlowNodeMetrics(
+                sizes = mapOf(
+                    source.id to FlowSize(160.0, 80.0),
+                    target.id to FlowSize(120.0, 60.0),
+                ),
+            ),
+        )
+        val sourceBounds = result.nodeBounds.getValue(source.id)
+        val targetBounds = result.nodeBounds.getValue(target.id)
+        val route = result.routes.getValue(FlowEdgeId("next-edge"))
+
+        assertEquals(sourceBounds.left + sourceBounds.size.width / 2.0, route.points.first().x, 0.001)
+        assertEquals(sourceBounds.bottom, route.points.first().y, 0.001)
+        assertEquals(targetBounds.left + targetBounds.size.width / 2.0, route.points.last().x, 0.001)
+        assertEquals(targetBounds.top, route.points.last().y, 0.001)
+    }
+
     @Test public fun `value compare chain is placed horizontally near consumer`() {
         val graphNodes = listOf(
             FlowGraphNode(FlowNodeId("if"), FlowSemanticKind(FlowNodeKind.DECISION), "if"),

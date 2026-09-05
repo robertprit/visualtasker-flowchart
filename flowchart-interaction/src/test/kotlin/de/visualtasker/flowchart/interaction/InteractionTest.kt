@@ -123,6 +123,33 @@ public class InteractionTest {
         controller.close(); controller.dispatch(FlowInteractionAction.ClearSelection); assertEquals(1, calls)
     }
 
+    @Test public fun `controller does not publish transient viewport replacement`() {
+        val controller = FlowchartController(FlowSurfaceId("s"))
+        var calls = 0
+        controller.setListeners({ calls++ }, null)
+        controller.attachGraph(graph, view)
+
+        controller.replaceViewport(FlowViewport(pan = FlowPoint(12.0, 24.0), zoom = 1.4))
+
+        assertEquals(0, calls)
+        assertEquals(FlowViewport(pan = FlowPoint(12.0, 24.0), zoom = 1.4), controller.snapshot().view!!.viewport)
+        controller.close()
+    }
+
+    @Test public fun `controller publishes auto layout replacement once`() {
+        val controller = FlowchartController(FlowSurfaceId("s"))
+        var calls = 0
+        var published: FlowViewDocument? = null
+        controller.setListeners({ view -> calls++; published = view }, null)
+        controller.attachGraph(graph, view)
+
+        val arranged = controller.replaceLayout()
+
+        assertEquals(1, calls)
+        assertEquals(arranged, published)
+        controller.close()
+    }
+
     @Test public fun `controller rebases stale view across same graph identity revision`() {
         val controller = FlowchartController(FlowSurfaceId("s"))
         val staleView = view.copy(

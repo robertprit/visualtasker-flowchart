@@ -657,9 +657,10 @@ public object FlowLayoutEngine {
             FlowEdgeKind.LOOP_EXIT -> null
             else -> null
         }
-        return sidePort(node, "outputPorts", portName, rect, inputSide = false)
+        return sidePort(node, "outputPorts", portName, rect, inputSide = false, orientation)
             ?: when {
                 orientation == FlowLayoutOrientation.TOP_TO_BOTTOM && edge.kind in sideOutputKinds -> FlowRoutePoint(rect.right, (rect.top + rect.bottom) / 2.0)
+                orientation == FlowLayoutOrientation.TOP_TO_BOTTOM && edge.kind == FlowEdgeKind.FALSE_BRANCH -> FlowRoutePoint((rect.left + rect.right) / 2.0, rect.bottom)
                 else -> if (orientation == FlowLayoutOrientation.TOP_TO_BOTTOM) FlowRoutePoint((rect.left + rect.right) / 2, rect.bottom) else FlowRoutePoint(rect.right, (rect.top + rect.bottom) / 2)
             }
     }
@@ -678,7 +679,7 @@ public object FlowLayoutEngine {
             FlowEdgeKind.LOOP_BODY -> "previous"
             else -> null
         }
-        return sidePort(node, "inputPorts", portName, rect, inputSide = true)
+        return sidePort(node, "inputPorts", portName, rect, inputSide = true, orientation)
             ?: when {
                 orientation == FlowLayoutOrientation.TOP_TO_BOTTOM && edge.kind in sideInputKinds -> FlowRoutePoint(rect.left, (rect.top + rect.bottom) / 2.0)
                 else -> if (orientation == FlowLayoutOrientation.TOP_TO_BOTTOM) FlowRoutePoint((rect.left + rect.right) / 2, rect.top) else FlowRoutePoint(rect.left, (rect.top + rect.bottom) / 2)
@@ -702,20 +703,77 @@ public object FlowLayoutEngine {
         name: String?,
         rect: FlowRect,
         inputSide: Boolean,
+        orientation: FlowLayoutOrientation,
     ): FlowRoutePoint? {
         name ?: return null
         val ports = node.flowPorts(key)
-        val index = ports.indexOf(name).takeIf { it >= 0 } ?: return null
-        val gap = rect.size.height / (ports.size + 1)
-        val y = rect.top + gap * (index + 1)
-        val x = if (inputSide) rect.left else rect.right
-        return FlowRoutePoint(x, y)
+        val index = ports.indexOfFirst { it.name == name }.takeIf { it >= 0 } ?: return null
+        if (orientation != FlowLayoutOrientation.TOP_TO_BOTTOM) {
+            val gap = rect.size.height / (ports.size + 1)
+            val y = rect.top + gap * (index + 1)
+            val x = if (inputSide) rect.left else rect.right
+            return FlowRoutePoint(x, y)
+        }
+        val port = ports[index]
+        val side = portSide(port, inputSide)
+        val portsOnSide = ports.filter { portSide(it, inputSide) == side }
+        val sideIndex = portsOnSide.indexOfFirst { it.name == name }.takeIf { it >= 0 } ?: 0
+        return when (side) {
+            PortSide.Left -> {
+                val gap = rect.size.height / (portsOnSide.size + 1)
+                FlowRoutePoint(rect.left, rect.top + gap * (sideIndex + 1))
+            }
+            PortSide.Right -> {
+                val gap = rect.size.height / (portsOnSide.size + 1)
+                FlowRoutePoint(rect.right, rect.top + gap * (sideIndex + 1))
+            }
+            PortSide.Top -> {
+                val gap = rect.size.width / (portsOnSide.size + 1)
+                FlowRoutePoint(rect.left + gap * (sideIndex + 1), rect.top)
+            }
+            PortSide.Bottom -> {
+                val gap = rect.size.width / (portsOnSide.size + 1)
+                FlowRoutePoint(rect.left + gap * (sideIndex + 1), rect.bottom)
+            }
+        }
     }
 
-    private fun FlowGraphNode.flowPorts(key: String): List<String> {
+    private data class LayoutPort(
+        val name: String,
+        val kind: FlowEdgeKind,
+    )
+
+    private enum class PortSide {
+        Top,
+        Bottom,
+        Left,
+        Right,
+    }
+
+    private fun portSide(port: LayoutPort, inputSide: Boolean): PortSide =
+        if (inputSide) {
+            when {
+                port.name.equals("previous", ignoreCase = true) -> PortSide.Top
+                port.kind == FlowEdgeKind.CONDITION || port.kind == FlowEdgeKind.DATA_FLOW -> PortSide.Left
+                else -> PortSide.Top
+            }
+        } else {
+            when {
+                port.name.equals("next", ignoreCase = true) -> PortSide.Bottom
+                port.kind == FlowEdgeKind.SEQUENCE || port.kind == FlowEdgeKind.LOOP_EXIT -> PortSide.Bottom
+                port.kind == FlowEdgeKind.LOOP_BODY || port.kind == FlowEdgeKind.LOOP_BACK -> PortSide.Left
+                else -> PortSide.Right
+            }
+        }
+
+    private fun FlowGraphNode.flowPorts(key: String): List<LayoutPort> {
         val value = properties[key] as? FlowSemanticValue.ListValue ?: return emptyList()
         return value.values.mapNotNull { item ->
-            ((item as? FlowSemanticValue.ObjectValue)?.values?.get("name") as? FlowSemanticValue.StringValue)?.value
+            val fields = (item as? FlowSemanticValue.ObjectValue)?.values ?: return@mapNotNull null
+            val name = (fields["name"] as? FlowSemanticValue.StringValue)?.value ?: return@mapNotNull null
+            val kindName = (fields["kind"] as? FlowSemanticValue.StringValue)?.value
+            val kind = FlowEdgeKind.entries.firstOrNull { it.name == kindName } ?: FlowEdgeKind.SEQUENCE
+            LayoutPort(name = name, kind = kind)
         }
     }
     private val branchKinds: Set<FlowEdgeKind> = setOf(
