@@ -956,6 +956,32 @@ internal fun flowArrowHead(
     )
 }
 
+private fun FlowViewDocument.focusedGraphPoint(
+    graph: FlowGraphDocument,
+    interaction: FlowInteractionState,
+): FlowPoint? =
+    interaction.selectedNodeIds.firstOrNull()?.let { nodeId ->
+        nodeViews.firstOrNull { it.nodeId == nodeId }?.centerPoint()
+    } ?: interaction.selectedEdgeIds.firstOrNull()?.let { edgeId ->
+        graph.edges.firstOrNull { it.id == edgeId }?.let { edge ->
+            edgeCenter(edge.sourceNodeId, edge.targetNodeId)
+        }
+    }
+
+private fun FlowNodeView.centerPoint(): FlowPoint {
+    val effectiveSize = size ?: FlowSize(128.0, 56.0)
+    return FlowPoint(
+        x = position.x + effectiveSize.width / 2.0,
+        y = position.y + effectiveSize.height / 2.0,
+    )
+}
+
+private fun FlowViewDocument.edgeCenter(sourceNodeId: FlowNodeId, targetNodeId: FlowNodeId): FlowPoint? {
+    val source = nodeViews.firstOrNull { it.nodeId == sourceNodeId }?.centerPoint() ?: return null
+    val target = nodeViews.firstOrNull { it.nodeId == targetNodeId }?.centerPoint() ?: return null
+    return FlowPoint((source.x + target.x) / 2.0, (source.y + target.y) / 2.0)
+}
+
 @Composable
 private fun FlowGestureLayer(
     graph: FlowGraphDocument,
@@ -991,17 +1017,23 @@ private fun FlowGestureLayer(
             detectTransformGestures { centroid, pan, zoom, _ ->
                 if (!config.panEnabled && !config.zoomEnabled) return@detectTransformGestures
                 val current = controller.snapshot().view ?: return@detectTransformGestures
+                val interaction = controller.snapshot().interaction
                 val old = current.viewport
                 val nextZoom = if (config.zoomEnabled) {
                     (old.zoom * zoom.toDouble()).coerceIn(0.1, 8.0)
                 } else {
                     old.zoom
                 }
-                val anchor = FlowPoint(centroid.x.toDouble(), centroid.y.toDouble())
-                val graphAnchor = FlowViewportTransform.screenToGraph(anchor, old)
-                val panX = if (config.zoomEnabled) anchor.x - graphAnchor.x * nextZoom else old.pan.x
-                val panY = if (config.zoomEnabled) anchor.y - graphAnchor.y * nextZoom else old.pan.y
-                val nextPan = if (config.panEnabled) {
+                val focusedPoint = current.focusedGraphPoint(graph, interaction)
+                val screenAnchor = if (focusedPoint != null) {
+                    FlowPoint(size.width / 2.0, size.height / 2.0)
+                } else {
+                    FlowPoint(centroid.x.toDouble(), centroid.y.toDouble())
+                }
+                val graphAnchor = focusedPoint ?: FlowViewportTransform.screenToGraph(screenAnchor, old)
+                val panX = if (config.zoomEnabled) screenAnchor.x - graphAnchor.x * nextZoom else old.pan.x
+                val panY = if (config.zoomEnabled) screenAnchor.y - graphAnchor.y * nextZoom else old.pan.y
+                val nextPan = if (config.panEnabled && focusedPoint == null) {
                     FlowPoint(panX + pan.x.toDouble(), panY + pan.y.toDouble())
                 } else {
                     FlowPoint(panX, panY)
