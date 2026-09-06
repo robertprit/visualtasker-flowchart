@@ -139,7 +139,7 @@ public class FlowchartUiConfigTest {
     }
 
     @Test
-    public fun `facet handle is placed above region and exposes actions`() {
+    public fun `facet handle is placed left of region and exposes visible actions`() {
         val node = FlowGraphNode(
             id = FlowNodeId("block:wait"),
             kind = FlowSemanticKind(FlowNodeKind.ACTION),
@@ -172,10 +172,11 @@ public class FlowchartUiConfigTest {
 
         val region = flowFacetRegions(graph, view) { Offset(it.x.toFloat(), it.y.toFloat()) }.single()
 
-        assertTrue(region.handleBounds.bottom < region.bounds.top)
+        assertTrue(region.handleBounds.right < region.bounds.left)
+        assertTrue(region.handleBounds.top > region.bounds.top)
         assertEquals(FlowFacetHandleAction.Drag, hitFlowFacetHandle(region.gripBounds.center, graph, view)?.action)
         assertEquals(FlowFacetHandleAction.ToggleCollapse, hitFlowFacetHandle(region.collapseBounds.center, graph, view)?.action)
-        assertEquals(FlowFacetHandleAction.ToggleLock, hitFlowFacetHandle(region.lockBounds.center, graph, view)?.action)
+        assertNull(hitFlowFacetHandle(region.lockBounds.center, graph, view))
     }
 
     @Test

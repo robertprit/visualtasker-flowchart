@@ -56,6 +56,7 @@ public fun FlowchartHost(
         controller.setListeners(
             { callbacks.onViewDocumentChanged(it); controllerState = controller.snapshot() },
             { callbacks.onStatusMessage(it); controllerState = controller.snapshot() },
+            { controllerState = it },
         )
         onDispose { controller.setListeners(null, null) }
     }
@@ -383,7 +384,7 @@ internal fun flowFacetRegions(
                 .map { FlowRect(it.position, it.size ?: FlowSize(160.0, 72.0)) }
             if (rects.isEmpty()) return@mapNotNull null
             val padding = 18f
-            val handleWidth = 72f
+            val handleWidth = 52f
             val handleHeight = 24f
             val handleGap = 6f
             val origin = screen(FlowPoint(rects.minOf { it.left }, rects.minOf { it.top }))
@@ -394,8 +395,8 @@ internal fun flowFacetRegions(
                 right = end.x + padding,
                 bottom = end.y + padding,
             )
-            val handleLeft = bounds.left + 8f
-            val handleTop = bounds.top - handleHeight - handleGap
+            val handleLeft = bounds.left - handleWidth - handleGap
+            val handleTop = bounds.top + 8f
             val handleBounds = androidx.compose.ui.geometry.Rect(
                 left = handleLeft,
                 top = handleTop,
@@ -408,8 +409,8 @@ internal fun flowFacetRegions(
                 bounds = bounds,
                 handleBounds = handleBounds,
                 gripBounds = androidx.compose.ui.geometry.Rect(handleBounds.left, handleBounds.top, handleBounds.left + 30f, handleBounds.bottom),
-                collapseBounds = androidx.compose.ui.geometry.Rect(handleBounds.left + 30f, handleBounds.top, handleBounds.left + 50f, handleBounds.bottom),
-                lockBounds = androidx.compose.ui.geometry.Rect(handleBounds.left + 50f, handleBounds.top, handleBounds.right, handleBounds.bottom),
+                collapseBounds = androidx.compose.ui.geometry.Rect(handleBounds.left + 30f, handleBounds.top, handleBounds.right, handleBounds.bottom),
+                lockBounds = androidx.compose.ui.geometry.Rect(0f, 0f, 0f, 0f),
             )
         }
 
@@ -426,7 +427,6 @@ internal fun hitFlowFacetHandle(
             when {
                 region.gripBounds.contains(offset) -> FlowFacetHandleHit(region, FlowFacetHandleAction.Drag)
                 region.collapseBounds.contains(offset) -> FlowFacetHandleHit(region, FlowFacetHandleAction.ToggleCollapse)
-                region.lockBounds.contains(offset) -> FlowFacetHandleHit(region, FlowFacetHandleAction.ToggleLock)
                 else -> null
             }
         }
@@ -497,6 +497,7 @@ private fun DrawScope.drawFacetHandle(
     locked: Boolean,
     collapsed: Boolean,
 ) {
+    locked
     val icon = 5.dp.toPx()
     val handleHeight = bounds.height
     drawRoundRect(
@@ -531,24 +532,6 @@ private fun DrawScope.drawFacetHandle(
         end = Offset(chevronX, chevronY + icon * chevronDirection),
         strokeWidth = 1.7.dp.toPx(),
         cap = StrokeCap.Round,
-    )
-    val lockX = bounds.left + 55.dp.toPx()
-    val lockY = bounds.top + 8.dp.toPx()
-    drawRoundRect(
-        color = if (locked) Color.White.copy(alpha = 0.88f) else Color.White.copy(alpha = 0.34f),
-        topLeft = Offset(lockX, lockY),
-        size = Size(10.dp.toPx(), 8.dp.toPx()),
-        cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx()),
-        style = Stroke(1.4.dp.toPx()),
-    )
-    drawArc(
-        color = if (locked) Color.White.copy(alpha = 0.88f) else Color.White.copy(alpha = 0.34f),
-        startAngle = 200f,
-        sweepAngle = 140f,
-        useCenter = false,
-        topLeft = Offset(lockX + 1.5.dp.toPx(), lockY - 5.dp.toPx()),
-        size = Size(7.dp.toPx(), 9.dp.toPx()),
-        style = Stroke(1.4.dp.toPx(), cap = StrokeCap.Round),
     )
 }
 
@@ -1173,7 +1156,7 @@ private fun FlowGestureLayer(
                         when {
                             node != null -> { controller.dispatch(FlowInteractionAction.SelectNode(node)); callbacks.onNodeSelected(node); callbacks.onEdgeSelected(null) }
                             edge != null -> { controller.dispatch(FlowInteractionAction.SelectEdge(edge)); callbacks.onNodeSelected(null); callbacks.onEdgeSelected(edge) }
-                            else -> { controller.dispatch(FlowInteractionAction.ClearSelection); callbacks.onNodeSelected(null); callbacks.onEdgeSelected(null) }
+                            else -> Unit
                         }
                     }
                     refresh()

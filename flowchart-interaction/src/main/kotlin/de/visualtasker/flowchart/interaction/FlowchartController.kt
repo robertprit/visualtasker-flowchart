@@ -19,9 +19,22 @@ public class FlowchartController(
     private var generation: Long = 0
     private var viewListener: ((FlowViewDocument) -> Unit)? = null
     private var statusListener: ((FlowchartStatus) -> Unit)? = null
+    private var stateListener: ((FlowchartControllerState) -> Unit)? = null
 
     public fun snapshot(): FlowchartControllerState = synchronized(lock) { state }
-    public fun setListeners(onViewChanged: ((FlowViewDocument) -> Unit)?, onStatus: ((FlowchartStatus) -> Unit)?) { synchronized(lock) { if (!state.closed) { viewListener = onViewChanged; statusListener = onStatus } } }
+    public fun setListeners(
+        onViewChanged: ((FlowViewDocument) -> Unit)?,
+        onStatus: ((FlowchartStatus) -> Unit)?,
+        onStateChanged: ((FlowchartControllerState) -> Unit)? = null,
+    ) {
+        synchronized(lock) {
+            if (!state.closed) {
+                viewListener = onViewChanged
+                statusListener = onStatus
+                stateListener = onStateChanged
+            }
+        }
+    }
 
     public fun attachGraph(graph: FlowGraphDocument, view: FlowViewDocument? = null): FlowchartStatus {
         val validation = FlowGraphValidator.validate(graph)
@@ -66,16 +79,21 @@ public class FlowchartController(
     }
 
     public fun dispatch(action: FlowInteractionAction): FlowInteractionResult? {
-        val callback: ((FlowViewDocument) -> Unit)?
+        val viewCallback: ((FlowViewDocument) -> Unit)?
+        val stateCallback: ((FlowchartControllerState) -> Unit)?
         val result: FlowInteractionResult
+        val updatedState: FlowchartControllerState
         synchronized(lock) {
             val graph = state.graph ?: return null; val view = state.view ?: return null
             if (state.closed) return null
             result = FlowInteractionReducer.reduce(state.interaction, action, graph, view)
             state = state.copy(view = result.view, interaction = result.state)
-            callback = if (result.viewChanged) viewListener else null
+            updatedState = state
+            viewCallback = if (result.viewChanged) viewListener else null
+            stateCallback = stateListener
         }
-        callback?.invoke(result.view)
+        viewCallback?.invoke(result.view)
+        stateCallback?.invoke(updatedState)
         return result
     }
 
@@ -154,7 +172,7 @@ public class FlowchartController(
         }
 
     private fun publishStatus(status: FlowchartStatus): FlowchartStatus { val callback = synchronized(lock) { if (state.closed) null else statusListener }; callback?.invoke(status); return status }
-    override fun close() { synchronized(lock) { if (!state.closed) { generation++; state = state.copy(runtime = null, closed = true); viewListener = null; statusListener = null } } }
+    override fun close() { synchronized(lock) { if (!state.closed) { generation++; state = state.copy(runtime = null, closed = true); viewListener = null; statusListener = null; stateListener = null } } }
 }
 
 private fun FlowGraphDocument.visibleLayoutNodes(): List<FlowGraphNode> =
