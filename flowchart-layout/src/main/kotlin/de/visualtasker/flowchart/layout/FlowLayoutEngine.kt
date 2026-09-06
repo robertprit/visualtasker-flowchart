@@ -52,7 +52,8 @@ public object FlowLayoutEngine {
             }
             componentOffset = componentExtent + config.componentSpacing
         }
-        applyCodeFlowOffsets(included, edges, allBounds, compatibleView, config)
+        val globalVariableNodeIds = globalVariableFacetNodeIds(graph.nodes)
+        applyCodeFlowOffsets(included, edges, allBounds, compatibleView, config, globalVariableNodeIds)
         resolveOverlaps(allBounds, config)
         normalizeBounds(allBounds)
         val diagnostics = mutableListOf<FlowLayoutDiagnostic>()
@@ -85,6 +86,21 @@ public object FlowLayoutEngine {
     private fun FlowGraphNode.isBackgroundFacetNode(): Boolean =
         properties["visualFacet"] == FlowSemanticValue.BooleanValue(true) &&
             properties["syntheticJoin"] != FlowSemanticValue.BooleanValue(true)
+
+    private fun globalVariableFacetNodeIds(nodes: List<FlowGraphNode>): Set<FlowNodeId> =
+        nodes
+            .filter { node ->
+                node.properties["visualFacet"] == FlowSemanticValue.BooleanValue(true) &&
+                    (node.properties["facetKind"] as? FlowSemanticValue.StringValue)?.value == "VARIABLE_BULK"
+            }
+            .flatMap { node ->
+                (node.properties["nodeIds"] as? FlowSemanticValue.ListValue)
+                    ?.values
+                    .orEmpty()
+                    .mapNotNull { (it as? FlowSemanticValue.StringValue)?.value }
+                    .map(::FlowNodeId)
+            }
+            .toSet()
 
     private fun classifyAndRank(nodes: Set<FlowNodeId>, edges: List<FlowGraphEdge>): Classified {
         val ranks = nodes.associateWith { 0 }.toMutableMap()
@@ -433,6 +449,7 @@ public object FlowLayoutEngine {
         bounds: MutableMap<FlowNodeId, FlowRect>,
         view: FlowViewDocument?,
         config: FlowLayoutConfig,
+        globalVariableNodeIds: Set<FlowNodeId>,
     ) {
         val pinnedNodeIds = view?.nodeViews.orEmpty().filter { it.pinned }.map { it.nodeId }.toSet()
         if (config.orientation == FlowLayoutOrientation.TOP_TO_BOTTOM) {
@@ -440,9 +457,11 @@ public object FlowLayoutEngine {
             val branchTargets = edges.filter { it.kind in branchKinds || it.kind == FlowEdgeKind.CONDITION || it.kind == FlowEdgeKind.DATA_FLOW }.map { it.targetNodeId }.toSet()
             repeat(3) {
                 alignStatementSequences(edges, bounds, pinnedNodeIds, branchTargets, config)
-                alignValueInputs(edges, bounds, pinnedNodeIds, config)
+                alignValueInputs(edges, bounds, pinnedNodeIds, config, globalVariableNodeIds)
             }
             alignJoinNodes(nodes, edges, bounds, pinnedNodeIds, config)
+            alignValueInputs(edges, bounds, pinnedNodeIds, config, globalVariableNodeIds)
+            alignGlobalVariableFacet(globalVariableNodeIds, bounds, pinnedNodeIds, config)
         }
         edges
             .filter { it.kind in branchKinds }
@@ -496,11 +515,12 @@ public object FlowLayoutEngine {
             val branchTargets = edges.filter { it.kind in branchKinds || it.kind == FlowEdgeKind.CONDITION || it.kind == FlowEdgeKind.DATA_FLOW }.map { it.targetNodeId }.toSet()
             repeat(3) {
                 alignStatementSequences(edges, bounds, pinnedNodeIds, branchTargets, config)
-                alignValueInputs(edges, bounds, pinnedNodeIds, config)
+                alignValueInputs(edges, bounds, pinnedNodeIds, config, globalVariableNodeIds)
             }
             alignJoinNodes(nodes, edges, bounds, pinnedNodeIds, config)
             applyWrappedCodeFlow(nodes, edges, bounds, pinnedNodeIds, config)
-            alignValueInputs(edges, bounds, pinnedNodeIds, config)
+            alignValueInputs(edges, bounds, pinnedNodeIds, config, globalVariableNodeIds)
+            alignGlobalVariableFacet(globalVariableNodeIds, bounds, pinnedNodeIds, config)
         }
     }
 
@@ -649,6 +669,7 @@ public object FlowLayoutEngine {
         bounds: MutableMap<FlowNodeId, FlowRect>,
         pinnedNodeIds: Set<FlowNodeId>,
         config: FlowLayoutConfig,
+        globalVariableNodeIds: Set<FlowNodeId>,
     ) {
         edges
             .filter { it.kind == FlowEdgeKind.CONDITION || it.kind == FlowEdgeKind.DATA_FLOW }
@@ -663,7 +684,7 @@ public object FlowLayoutEngine {
                 val total = orderedIncoming.size
                 orderedIncoming
                     .forEachIndexed { index, edge ->
-                        if (edge.sourceNodeId in pinnedNodeIds) return@forEachIndexed
+                        if (edge.sourceNodeId in pinnedNodeIds || edge.sourceNodeId in globalVariableNodeIds) return@forEachIndexed
                         val value = bounds[edge.sourceNodeId] ?: return@forEachIndexed
                         val slotOffset = index - ((total - 1) / 2.0)
                         bounds[edge.sourceNodeId] = value.copy(
@@ -675,6 +696,35 @@ public object FlowLayoutEngine {
                         )
                     }
             }
+    }
+
+    private fun alignGlobalVariableFacet(
+        globalVariableNodeIds: Set<FlowNodeId>,
+        bounds: MutableMap<FlowNodeId, FlowRect>,
+        pinnedNodeIds: Set<FlowNodeId>,
+        config: FlowLayoutConfig,
+    ) {
+        val variables = globalVariableNodeIds
+            .filter { it !in pinnedNodeIds }
+            .mapNotNull { id -> bounds[id]?.let { id to it } }
+            .sortedBy { it.first.value }
+        if (variables.isEmpty()) return
+        val nonGlobalBounds = bounds
+            .filterKeys { it !in globalVariableNodeIds }
+            .values
+        val stemLeft = nonGlobalBounds.minOfOrNull { it.left } ?: 0.0
+        val stemTop = nonGlobalBounds.minOfOrNull { it.top } ?: 0.0
+        val variableWidth = variables.maxOf { it.second.size.width }
+        var y = stemTop
+        variables.forEach { (id, rect) ->
+            bounds[id] = rect.copy(
+                origin = FlowPoint(
+                    x = stemLeft - variableWidth - config.nodeSpacing * 1.15,
+                    y = y,
+                ),
+            )
+            y += rect.size.height + config.nodeSpacing * 0.34
+        }
     }
 
     private fun alignJoinNodes(

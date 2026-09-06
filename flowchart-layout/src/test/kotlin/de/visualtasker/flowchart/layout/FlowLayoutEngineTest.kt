@@ -544,6 +544,56 @@ public class FlowLayoutEngineTest {
         assertTrue(firstLane != secondLane)
     }
 
+    @Test public fun `variable bulk facet anchors globals before main flow`() {
+        val start = FlowGraphNode(FlowNodeId("start"), FlowSemanticKind(FlowNodeKind.ENTRY), "start")
+        val setLow = FlowGraphNode(FlowNodeId("setLow"), FlowSemanticKind(FlowNodeKind.ASSIGNMENT), "set low")
+        val setHigh = FlowGraphNode(FlowNodeId("setHigh"), FlowSemanticKind(FlowNodeKind.ASSIGNMENT), "set high")
+        val compare = FlowGraphNode(FlowNodeId("compare"), FlowSemanticKind(FlowNodeKind.DECISION), "compare")
+        val after = FlowGraphNode(FlowNodeId("after"), FlowSemanticKind(FlowNodeKind.ACTION), "after")
+        val facet = FlowGraphNode(
+            FlowNodeId("facet:variables"),
+            FlowSemanticKind(FlowNodeKind.SYNTHETIC),
+            "Variables",
+            properties = mapOf(
+                "visualFacet" to FlowSemanticValue.BooleanValue(true),
+                "facetKind" to FlowSemanticValue.StringValue("VARIABLE_BULK"),
+                "nodeIds" to FlowSemanticValue.ListValue(
+                    listOf(
+                        FlowSemanticValue.StringValue(setLow.id.value),
+                        FlowSemanticValue.StringValue(setHigh.id.value),
+                    )
+                ),
+            ),
+        )
+        val graph = FlowGraphDocument(
+            documentId = FlowDocumentId("variable-bulk"),
+            documentRevision = FlowDocumentRevision("1"),
+            producerId = "fixture",
+            producerVersion = "1",
+            sourceRevision = "1",
+            sourceHash = "hash",
+            nodes = listOf(start, setLow, setHigh, compare, after, facet),
+            edges = listOf(
+                FlowGraphEdge(FlowEdgeId("start-compare"), start.id, compare.id, FlowEdgeKind.SEQUENCE),
+                FlowGraphEdge(FlowEdgeId("low-compare"), setLow.id, compare.id, FlowEdgeKind.DATA_FLOW),
+                FlowGraphEdge(FlowEdgeId("high-compare"), setHigh.id, compare.id, FlowEdgeKind.DATA_FLOW),
+                FlowGraphEdge(FlowEdgeId("compare-after"), compare.id, after.id, FlowEdgeKind.TRUE_BRANCH),
+            ),
+        )
+
+        val result = FlowLayoutEngine.layout(graph, config = FlowLayoutConfig(semanticWrapEnabled = true))
+        val startBounds = result.nodeBounds.getValue(start.id)
+        val lowBounds = result.nodeBounds.getValue(setLow.id)
+        val highBounds = result.nodeBounds.getValue(setHigh.id)
+        val compareBounds = result.nodeBounds.getValue(compare.id)
+
+        assertTrue(lowBounds.right < startBounds.left)
+        assertEquals(lowBounds.left, highBounds.left, 0.001)
+        assertTrue(kotlin.math.abs(highBounds.top - lowBounds.top) > 1.0)
+        assertTrue(compareBounds.left >= startBounds.left)
+        result.assertNoNodeOverlaps(gap = 1.0)
+    }
+
     private fun graph(nodes: List<String>, edges: List<Pair<String, String>>): FlowGraphDocument {
         val graphNodes = nodes.map { FlowGraphNode(FlowNodeId(it), FlowSemanticKind(FlowNodeKind.ACTION), it) }
         val graphEdges = edges.mapIndexed { index, (source, target) -> FlowGraphEdge(FlowEdgeId("e$index"), FlowNodeId(source), FlowNodeId(target), FlowEdgeKind.SEQUENCE) }
