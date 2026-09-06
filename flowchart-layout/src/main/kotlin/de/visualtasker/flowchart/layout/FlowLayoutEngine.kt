@@ -55,6 +55,8 @@ public object FlowLayoutEngine {
         val globalVariableNodeIds = globalVariableFacetNodeIds(graph.nodes)
         applyCodeFlowOffsets(included, edges, allBounds, compatibleView, config, globalVariableNodeIds)
         resolveOverlaps(allBounds, config)
+        compactVerticalGaps(allBounds, config)
+        resolveOverlaps(allBounds, config)
         normalizeBounds(allBounds)
         val diagnostics = mutableListOf<FlowLayoutDiagnostic>()
         val nodesById = included.associateBy { it.id }
@@ -786,6 +788,42 @@ public object FlowLayoutEngine {
                 }
             }
             if (!changed) return
+        }
+    }
+
+    private fun compactVerticalGaps(
+        bounds: MutableMap<FlowNodeId, FlowRect>,
+        config: FlowLayoutConfig,
+    ) {
+        if (bounds.size < 3) return
+        val rowTolerance = max(8.0, config.nodeSpacing * 0.28)
+        val maxVisibleGap = max(config.layerSpacing * 0.82, config.nodeSpacing * 0.92)
+        val rows = mutableListOf<List<Map.Entry<FlowNodeId, FlowRect>>>()
+        bounds.entries
+            .sortedWith(compareBy<Map.Entry<FlowNodeId, FlowRect>> { it.value.top }.thenBy { it.value.left }.thenBy { it.key.value })
+            .forEach { entry ->
+                val last = rows.lastOrNull()
+                val lastTop = last?.minOfOrNull { it.value.top }
+                if (last == null || lastTop == null || kotlin.math.abs(entry.value.top - lastTop) > rowTolerance) {
+                    rows += listOf(entry)
+                } else {
+                    rows[rows.lastIndex] = last + entry
+                }
+            }
+        var previousBottom = rows.firstOrNull()?.maxOfOrNull { it.value.bottom } ?: return
+        rows.drop(1).forEach { row ->
+            val rowTop = row.minOf { it.value.top }
+            val rowBottom = row.maxOf { it.value.bottom }
+            val desiredTop = previousBottom + maxVisibleGap
+            val shiftUp = (rowTop - desiredTop).coerceAtLeast(0.0)
+            if (shiftUp > 0.0) {
+                row.forEach { (id, rect) ->
+                    bounds[id] = rect.copy(origin = FlowPoint(rect.left, rect.top - shiftUp))
+                }
+                previousBottom = rowBottom - shiftUp
+            } else {
+                previousBottom = rowBottom
+            }
         }
     }
 

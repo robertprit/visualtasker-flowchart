@@ -124,13 +124,15 @@ private fun FlowCanvas(
                 val points = edgeGraphPoints(edge, graph, view).map(::screen)
                 if (points.size < 2) null else Triple(edge, points, edgeIsWrapCable(edge, graph, view))
             }
+            .sortedWith(compareBy<Triple<FlowGraphEdge, List<Offset>, Boolean>> { it.first.isSelectedOrOutgoingFromSelection(interaction) }.thenBy { it.first.id.value })
         edgeRoutes.forEachIndexed { edgeIndex, (edge, points, isWrapCable) ->
             if (points.size < 2) return@forEachIndexed
             val traversed = edge.id in visibleRuntime?.traversedEdgeIds.orEmpty()
-            val edgeColor = if (traversed) {
-                config.colorTokens.traversedEdge
-            } else {
-                when (flowEdgeVisualCategory(edge.kind)) {
+            val highlighted = edge.isSelectedOrOutgoingFromSelection(interaction)
+            val edgeColor = when {
+                highlighted -> config.colorTokens.selectedStroke
+                traversed -> config.colorTokens.traversedEdge
+                else -> when (flowEdgeVisualCategory(edge.kind)) {
                     FlowchartEdgeVisualCategory.DEFAULT -> config.colorTokens.edge
                     FlowchartEdgeVisualCategory.BRANCH -> config.colorTokens.branchEdge
                     FlowchartEdgeVisualCategory.DATA -> config.colorTokens.dataEdge
@@ -138,7 +140,11 @@ private fun FlowCanvas(
                     FlowchartEdgeVisualCategory.ERROR -> config.colorTokens.errorEdge
                 }
             }
-            val edgeStrokeWidth = config.shapeTokens.edgeStrokeWidthDp.dp.toPx() * if (traversed) 1.55f else 1f
+            val edgeStrokeWidth = config.shapeTokens.edgeStrokeWidthDp.dp.toPx() * when {
+                highlighted -> 2.05f
+                traversed -> 1.55f
+                else -> 1f
+            }
             val bridges = edgeBridgeIntersections(
                 points = points,
                 previousRoutes = edgeRoutes.take(edgeIndex).map { it.second },
@@ -215,6 +221,20 @@ private fun FlowCanvas(
             if (node.isBackgroundFacetNode()) return@forEach
             if (node.id in collapsedNodeIds) return@forEach
             val nodeView = view.nodeViews.firstOrNull { it.nodeId == node.id } ?: return@forEach
+            val size = nodeView.size ?: FlowSize(160.0, 72.0)
+            val origin = screen(nodeView.position)
+            val canvasSize = Size((size.width * viewport.zoom).toFloat(), (size.height * viewport.zoom).toFloat())
+            drawNodePorts(
+                node = node,
+                origin = origin,
+                size = canvasSize,
+                config = config,
+            )
+        }
+        graph.nodes.sortedBy { it.id.value }.forEach { node ->
+            if (node.isBackgroundFacetNode()) return@forEach
+            if (node.id in collapsedNodeIds) return@forEach
+            val nodeView = view.nodeViews.firstOrNull { it.nodeId == node.id } ?: return@forEach
             val size = nodeView.size ?: FlowSize(160.0, 72.0); val origin = screen(nodeView.position); val canvasSize = Size((size.width * viewport.zoom).toFloat(), (size.height * viewport.zoom).toFloat())
             val runtimeState = visibleRuntime?.nodeStates?.get(node.id)
             val nodeFillColor = flowNodeFillColor(node, config.colorTokens)
@@ -248,16 +268,13 @@ private fun FlowCanvas(
                 drawRoundRect(nodeFillColor, origin, canvasSize, CornerRadius(config.shapeTokens.nodeCornerRadiusDp.dp.toPx()))
                 drawRoundRect(stroke, origin, canvasSize, CornerRadius(config.shapeTokens.nodeCornerRadiusDp.dp.toPx()), style = Stroke(config.shapeTokens.nodeStrokeWidthDp.dp.toPx(), pathEffect = if (node.kind.standard == FlowNodeKind.UNKNOWN_SOURCE || node.kind.extensionId != null) PathEffect.dashPathEffect(floatArrayOf(10f, 6f)) else null))
             }
-            drawNodePorts(
-                node = node,
-                origin = origin,
-                size = canvasSize,
-                config = config,
-            )
             if (config.diagnosticMarkersEnabled && node.diagnosticIds.isNotEmpty()) drawCircle(config.colorTokens.diagnostic, 6.dp.toPx(), Offset(origin.x + canvasSize.width - 10.dp.toPx(), origin.y + 10.dp.toPx()))
         }
     }
 }
+
+private fun FlowGraphEdge.isSelectedOrOutgoingFromSelection(interaction: FlowInteractionState): Boolean =
+    id in interaction.selectedEdgeIds || sourceNodeId in interaction.selectedNodeIds
 
 private fun DrawScope.drawBackgroundFacetRegions(
     graph: FlowGraphDocument,
