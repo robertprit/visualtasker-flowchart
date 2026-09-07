@@ -1130,14 +1130,7 @@ private fun FlowGestureLayer(
                                     ),
                                 )?.let(callbacks.onViewDocumentChanged)
                             }
-                            val effectivePoint = if (autoPan == Offset.Zero) {
-                                point
-                            } else {
-                                FlowPoint(
-                                    x = (change.position.x - autoPan.x).toDouble(),
-                                    y = (change.position.y - autoPan.y).toDouble(),
-                                )
-                            }
+                            val effectivePoint = point
                             controller.dispatch(FlowInteractionAction.UpdateNodeDrag(effectivePoint))
                             callbacks.onNodeDragChanged(dragNode, effectivePoint)
                         }

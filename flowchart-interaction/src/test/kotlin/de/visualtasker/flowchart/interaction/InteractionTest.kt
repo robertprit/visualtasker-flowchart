@@ -114,6 +114,24 @@ public class InteractionTest {
         }
     }
 
+    @Test public fun `drag continues from real pointer after viewport auto pan`() {
+        var result = FlowInteractionReducer.reduce(
+            FlowInteractionState(),
+            FlowInteractionAction.BeginNodeDrag(nodes[0].id, FlowPoint(100.0, 50.0)),
+            graph,
+            view,
+        )
+        val pannedView = result.view.copy(viewport = result.view.viewport.copy(pan = FlowPoint(-24.0, 0.0)))
+        result = FlowInteractionReducer.reduce(
+            result.state,
+            FlowInteractionAction.UpdateNodeDrag(FlowPoint(380.0, 50.0)),
+            graph,
+            pannedView,
+        )
+
+        assertEquals(FlowPoint(280.0, 0.0), result.view.nodeViews[0].position)
+    }
+
     @Test public fun `controller is callback silent on attach and emits once after commit`() {
         val controller = FlowchartController(FlowSurfaceId("s")); var calls = 0; var committed: FlowViewDocument? = null
         controller.setListeners({ calls++; committed = controller.snapshot().view }, null)
