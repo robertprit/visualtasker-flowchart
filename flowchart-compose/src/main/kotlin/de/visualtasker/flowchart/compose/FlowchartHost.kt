@@ -60,7 +60,10 @@ public fun FlowchartHost(
         )
         onDispose { controller.setListeners(null, null) }
     }
-    LaunchedEffect(controller, graphDocument, viewDocument) { controller.attachGraph(graphDocument, viewDocument); controllerState = controller.snapshot() }
+    LaunchedEffect(controller, graphDocument) {
+        controller.attachGraph(graphDocument, viewDocument)
+        controllerState = controller.snapshot()
+    }
     LaunchedEffect(controller, runtimeSnapshot) { runtimeSnapshot?.let(controller::attachRuntime); controllerState = controller.snapshot() }
     val view = controllerState.view
     if (graphDocument.nodes.isEmpty() || view == null) {
@@ -1005,9 +1008,9 @@ private fun FlowGestureLayer(
     var panning by remember { mutableStateOf(false) }
     val currentView by rememberUpdatedState(view)
     val density = LocalDensity.current
-    val portWidthPx = with(density) { 92.dp.toPx() }
-    val portHeightPx = with(density) { 56.dp.toPx() }
-    val portMagnetRadiusPx = with(density) { 88.dp.toPx() }
+    val portWidthPx = with(density) { 108.dp.toPx() }
+    val portHeightPx = with(density) { 68.dp.toPx() }
+    val portMagnetRadiusPx = with(density) { 104.dp.toPx() }
     val platformView = LocalView.current
     val hapticFeedback = LocalHapticFeedback.current
     var previousTapAt by remember { mutableLongStateOf(0L) }
@@ -1038,7 +1041,7 @@ private fun FlowGestureLayer(
                 } else {
                     FlowPoint(panX, panY)
                 }
-                controller.replaceViewport(FlowViewport(nextPan, nextZoom))
+                controller.replaceViewport(FlowViewport(nextPan, nextZoom))?.let(callbacks.onViewDocumentChanged)
                 refresh()
             }
         }
@@ -1057,7 +1060,7 @@ private fun FlowGestureLayer(
                     refresh()
                     return@awaitEachGesture
                 }
-                val startPortHit = hitNodePort(down.position, graph, currentView, portWidthPx, portHeightPx, magnetRadiusPx = with(density) { 6.dp.toPx() })
+                val startPortHit = hitNodePort(down.position, graph, currentView, portWidthPx, portHeightPx, magnetRadiusPx = with(density) { 14.dp.toPx() })
                         ?.takeUnless { it.ref.inputSide }
                         ?.takeUnless { it.ref.nodeId in hiddenNodeIds }
                 val nodeAtDown = if (startPortHit == null && config.nodeDraggingEnabled) {
@@ -1125,7 +1128,7 @@ private fun FlowGestureLayer(
                                             y = current.viewport.pan.y + autoPan.y.toDouble(),
                                         ),
                                     ),
-                                )
+                                )?.let(callbacks.onViewDocumentChanged)
                             }
                             val effectivePoint = if (autoPan == Offset.Zero) {
                                 point
