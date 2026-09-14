@@ -582,8 +582,10 @@ public object FlowLayoutEngine {
         if (movable.isEmpty()) return
         val startX = chain.mapNotNull(bounds::get).minOfOrNull { it.left } ?: 0.0
         val startY = chain.mapNotNull(bounds::get).minOfOrNull { it.top } ?: 0.0
-        val columnWidth = chain.mapNotNull(bounds::get).maxOfOrNull { it.size.width } ?: 160.0
-        val rowHeight = chain.mapNotNull(bounds::get).maxOfOrNull { it.size.height } ?: 72.0
+        val columnWidth = chain.mapNotNull(bounds::get).maxOfOrNull { it.size.width }
+            ?: FlowNodeViewDefaults.StandardSize.width
+        val rowHeight = chain.mapNotNull(bounds::get).maxOfOrNull { it.size.height }
+            ?: FlowNodeViewDefaults.StandardSize.height
         val columnStride = columnWidth + config.nodeSpacing * 1.9
         val rowStride = rowHeight + config.layerSpacing * 0.52
         val semanticNodes = nodes.associateBy { it.id }

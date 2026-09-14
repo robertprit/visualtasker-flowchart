@@ -50,6 +50,10 @@ public sealed interface FlowInteractionAction {
     public data object CancelViewportPan : FlowInteractionAction
     public data class ZoomViewport(public val factor: Double, public val anchor: FlowPoint) : FlowInteractionAction
     public data class MarqueeSelection(public val rect: FlowRect) : FlowInteractionAction
+    public data class SetFacetCollapsed(
+        public val facetId: FlowNodeId,
+        public val collapsed: Boolean,
+    ) : FlowInteractionAction
     public data object UndoViewChange : FlowInteractionAction
     public data object RedoViewChange : FlowInteractionAction
     public data class SetMovementMode(public val mode: FlowMovementMode) : FlowInteractionAction

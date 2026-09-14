@@ -27,7 +27,10 @@ public data class FlowLayoutConfig(
     }
 }
 
-public data class FlowNodeMetrics(public val sizes: Map<FlowNodeId, FlowSize>, public val defaultSize: FlowSize = FlowSize(160.0, 72.0))
+public data class FlowNodeMetrics(
+    public val sizes: Map<FlowNodeId, FlowSize>,
+    public val defaultSize: FlowSize = FlowNodeViewDefaults.StandardSize,
+)
 public enum class FlowRouteKind { ORTHOGONAL, LOOP_BACK, BRANCH, WRAP_BEZIER, DIRECT_FALLBACK }
 public data class FlowRoutePoint(public val x: Double, public val y: Double) { public fun asPoint(): FlowPoint = FlowPoint(x, y) }
 public data class FlowRouteSegment(public val start: FlowRoutePoint, public val end: FlowRoutePoint)

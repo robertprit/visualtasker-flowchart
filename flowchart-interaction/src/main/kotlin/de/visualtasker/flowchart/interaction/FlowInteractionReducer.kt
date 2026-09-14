@@ -22,6 +22,7 @@ public object FlowInteractionReducer {
         FlowInteractionAction.CancelViewportPan -> cancelPan(state, view)
         is FlowInteractionAction.ZoomViewport -> zoom(state, action, view)
         is FlowInteractionAction.MarqueeSelection -> marquee(state, action, view)
+        is FlowInteractionAction.SetFacetCollapsed -> setFacetCollapsed(state, action, graph, view)
         FlowInteractionAction.UndoViewChange -> undo(state, view)
         FlowInteractionAction.RedoViewChange -> redo(state, view)
     }
@@ -94,6 +95,30 @@ public object FlowInteractionReducer {
         return result(state.copy(selectedNodeIds = selected, selectedEdgeIds = emptySet(), marqueeState = null), view)
     }
 
+    private fun setFacetCollapsed(
+        state: FlowInteractionState,
+        action: FlowInteractionAction.SetFacetCollapsed,
+        graph: FlowGraphDocument,
+        view: FlowViewDocument,
+    ): FlowInteractionResult {
+        val facet = graph.nodes.firstOrNull { node ->
+            node.id == action.facetId &&
+                node.properties["visualFacet"] == FlowSemanticValue.BooleanValue(true)
+        } ?: return result(state, view)
+        val collapsedIds = view.collapsedFacetNodeIds().toMutableSet().apply {
+            if (action.collapsed) add(facet.id) else remove(facet.id)
+        }
+        if (collapsedIds == view.collapsedFacetNodeIds()) return result(state, view)
+        val hiddenIds = if (action.collapsed) facet.facetContentNodeIds() else emptySet()
+        val nextState = state.copy(
+            selectedNodeIds = if (state.selectedNodeIds.any { it in hiddenIds }) setOf(facet.id) else state.selectedNodeIds,
+            selectedEdgeIds = if (action.collapsed) emptySet() else state.selectedEdgeIds,
+            undoHistory = state.undoHistory + view,
+            redoHistory = emptyList(),
+        )
+        return FlowInteractionResult(nextState, view.withCollapsedFacetNodeIds(collapsedIds), true)
+    }
+
     private fun undo(state: FlowInteractionState, view: FlowViewDocument): FlowInteractionResult {
         val previous = state.undoHistory.lastOrNull() ?: return result(state, view)
         return FlowInteractionResult(state.copy(undoHistory = state.undoHistory.dropLast(1), redoHistory = state.redoHistory + view), previous, true)
@@ -127,3 +152,31 @@ public object FlowInteractionReducer {
     private fun intersects(a: FlowRect, b: FlowRect): Boolean = a.left <= b.right && a.right >= b.left && a.top <= b.bottom && a.bottom >= b.top
     private fun result(state: FlowInteractionState, view: FlowViewDocument): FlowInteractionResult = FlowInteractionResult(state, view, false)
 }
+
+private const val COLLAPSED_FACETS_EXTENSION = "visualtasker.collapsed-facets"
+
+public fun FlowViewDocument.collapsedFacetNodeIds(): Set<FlowNodeId> =
+    extensions
+        .firstOrNull { it.key == COLLAPSED_FACETS_EXTENSION }
+        ?.value
+        ?.let { it as? FlowSemanticValue.ListValue }
+        ?.values
+        .orEmpty()
+        .mapNotNull { (it as? FlowSemanticValue.StringValue)?.value }
+        .mapTo(linkedSetOf(), ::FlowNodeId)
+
+private fun FlowViewDocument.withCollapsedFacetNodeIds(ids: Set<FlowNodeId>): FlowViewDocument {
+    val retained = extensions.filterNot { it.key == COLLAPSED_FACETS_EXTENSION }
+    val extension = FlowGraphExtension(
+        key = COLLAPSED_FACETS_EXTENSION,
+        value = FlowSemanticValue.ListValue(ids.sortedBy { it.value }.map { FlowSemanticValue.StringValue(it.value) }),
+    )
+    return copy(extensions = retained + extension)
+}
+
+private fun FlowGraphNode.facetContentNodeIds(): Set<FlowNodeId> =
+    (properties["nodeIds"] as? FlowSemanticValue.ListValue)
+        ?.values
+        .orEmpty()
+        .mapNotNull { (it as? FlowSemanticValue.StringValue)?.value }
+        .mapTo(linkedSetOf(), ::FlowNodeId)

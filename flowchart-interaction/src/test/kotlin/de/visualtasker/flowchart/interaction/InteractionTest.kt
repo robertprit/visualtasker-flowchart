@@ -141,16 +141,28 @@ public class InteractionTest {
         controller.close(); controller.dispatch(FlowInteractionAction.ClearSelection); assertEquals(1, calls)
     }
 
-    @Test public fun `controller does not publish transient viewport replacement`() {
+    @Test public fun `controller publishes transient viewport state without committing view`() {
         val controller = FlowchartController(FlowSurfaceId("s"))
-        var calls = 0
-        controller.setListeners({ calls++ }, null)
+        var viewCalls = 0
+        var stateCalls = 0
+        var publishedState: FlowchartControllerState? = null
+        controller.setListeners(
+            onViewChanged = { viewCalls++ },
+            onStatus = null,
+            onStateChanged = { state ->
+                stateCalls++
+                publishedState = state
+            },
+        )
         controller.attachGraph(graph, view)
 
-        controller.replaceViewport(FlowViewport(pan = FlowPoint(12.0, 24.0), zoom = 1.4))
+        val viewport = FlowViewport(pan = FlowPoint(12.0, 24.0), zoom = 1.4)
+        controller.replaceViewport(viewport)
 
-        assertEquals(0, calls)
-        assertEquals(FlowViewport(pan = FlowPoint(12.0, 24.0), zoom = 1.4), controller.snapshot().view!!.viewport)
+        assertEquals(0, viewCalls)
+        assertEquals(1, stateCalls)
+        assertEquals(viewport, publishedState?.view?.viewport)
+        assertEquals(viewport, controller.snapshot().view!!.viewport)
         controller.close()
     }
 
@@ -166,6 +178,59 @@ public class InteractionTest {
         assertEquals(1, calls)
         assertEquals(arranged, published)
         controller.close()
+    }
+
+    @Test public fun `facet collapse persists in view and participates in undo redo`() {
+        val facet = FlowGraphNode(
+            id = FlowNodeId("facet"),
+            kind = FlowSemanticKind(FlowNodeKind.SYNTHETIC),
+            label = "Group",
+            properties = mapOf(
+                "visualFacet" to FlowSemanticValue.BooleanValue(true),
+                "nodeIds" to FlowSemanticValue.ListValue(
+                    listOf(FlowSemanticValue.StringValue(nodes[1].id.value)),
+                ),
+            ),
+        )
+        val facetGraph = graph.copy(nodes = nodes + facet)
+        var result = FlowInteractionReducer.reduce(
+            FlowInteractionState(selectedNodeIds = setOf(nodes[1].id)),
+            FlowInteractionAction.SetFacetCollapsed(facet.id, collapsed = true),
+            facetGraph,
+            view,
+        )
+
+        assertTrue(result.viewChanged)
+        assertEquals(setOf(facet.id), result.view.collapsedFacetNodeIds())
+        assertEquals(setOf(facet.id), result.state.selectedNodeIds)
+
+        result = FlowInteractionReducer.reduce(
+            result.state,
+            FlowInteractionAction.UndoViewChange,
+            facetGraph,
+            result.view,
+        )
+        assertTrue(result.view.collapsedFacetNodeIds().isEmpty())
+
+        result = FlowInteractionReducer.reduce(
+            result.state,
+            FlowInteractionAction.RedoViewChange,
+            facetGraph,
+            result.view,
+        )
+        assertEquals(setOf(facet.id), result.view.collapsedFacetNodeIds())
+    }
+
+    @Test public fun `non facet nodes cannot be collapsed`() {
+        val result = FlowInteractionReducer.reduce(
+            FlowInteractionState(),
+            FlowInteractionAction.SetFacetCollapsed(nodes[0].id, collapsed = true),
+            graph,
+            view,
+        )
+
+        assertFalse(result.viewChanged)
+        assertTrue(result.view.collapsedFacetNodeIds().isEmpty())
     }
 
     @Test public fun `controller rebases stale view across same graph identity revision`() {

@@ -5,6 +5,11 @@ import kotlinx.serialization.Serializable
 
 @Serializable public data class FlowPoint(public val x: Double, public val y: Double)
 @Serializable public data class FlowSize(public val width: Double, public val height: Double)
+
+public object FlowNodeViewDefaults {
+    public val StandardSize: FlowSize = FlowSize(96.0, 96.0)
+}
+
 @Serializable public data class FlowRect(public val origin: FlowPoint, public val size: FlowSize) {
     public val left: Double get() = origin.x
     public val top: Double get() = origin.y

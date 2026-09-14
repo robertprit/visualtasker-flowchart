@@ -6,6 +6,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 public class FlowLayoutEngineTest {
+    @Test public fun `default node viewport is square`() {
+        val size = FlowNodeMetrics(emptyMap()).defaultSize
+
+        assertEquals(FlowSize(96.0, 96.0), size)
+        assertEquals(size.width, size.height, 0.0)
+    }
+
     @Test public fun `identical input produces identical positions and routes`() {
         val graph = graph(listOf("a", "b", "c"), listOf("a" to "b", "a" to "c"))
         val first = FlowLayoutEngine.layout(graph, config = FlowLayoutConfig(deterministicSeed = 42))

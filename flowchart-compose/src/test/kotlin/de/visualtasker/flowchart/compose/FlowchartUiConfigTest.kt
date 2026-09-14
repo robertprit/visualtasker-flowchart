@@ -9,6 +9,7 @@ import de.visualtasker.flowchart.domain.FlowEdgeKind
 import de.visualtasker.flowchart.domain.FlowDocumentId
 import de.visualtasker.flowchart.domain.FlowDocumentRevision
 import de.visualtasker.flowchart.domain.FlowEdgeId
+import de.visualtasker.flowchart.domain.FlowExecutionKind
 import de.visualtasker.flowchart.domain.FlowGraphDocument
 import de.visualtasker.flowchart.domain.FlowGraphEdge
 import de.visualtasker.flowchart.domain.FlowGraphNode
@@ -174,6 +175,28 @@ public class FlowchartUiConfigTest {
     }
 
     @Test
+    public fun `execution kind gives terminators distinct labels and colors`() {
+        val start = FlowGraphNode(
+            FlowNodeId("start"),
+            FlowSemanticKind(FlowNodeKind.ENTRY),
+            "Script Start",
+        )
+        val end = FlowGraphNode(
+            FlowNodeId("end"),
+            FlowSemanticKind(FlowNodeKind.EXIT),
+            "End",
+        )
+        val tokens = FlowchartColorTokens()
+
+        assertEquals("Workflow Start", flowNodeDisplayLabel(start, FlowExecutionKind.WORKFLOW))
+        assertEquals("Recording Start", flowNodeDisplayLabel(start, FlowExecutionKind.RECORDING))
+        assertEquals("DryRun End", flowNodeDisplayLabel(end, FlowExecutionKind.DRY_RUN))
+        assertEquals(tokens.eventNodeFill, flowNodeFillColor(start, tokens, FlowExecutionKind.WORKFLOW))
+        assertEquals(tokens.feedbackNodeFill, flowNodeFillColor(start, tokens, FlowExecutionKind.RECORDING))
+        assertEquals(tokens.debugNodeFill, flowNodeFillColor(end, tokens, FlowExecutionKind.DRY_RUN))
+    }
+
+    @Test
     public fun `arrow head follows final routed segment without changing route`() {
         val route = listOf(Offset(10f, 10f), Offset(40f, 10f), Offset(40f, 50f))
 
@@ -330,6 +353,39 @@ public class FlowchartUiConfigTest {
 
         assertEquals("Comment marker", facetDisplayLabel(facet))
         assertEquals("Kommentarbereich", facetKindDisplayLabel(facet))
+    }
+
+    @Test
+    public fun `collapsed outer facet hides nested members and nested facet handle`() {
+        val first = FlowGraphNode(FlowNodeId("first"), FlowSemanticKind(FlowNodeKind.ACTION), "first")
+        val second = FlowGraphNode(FlowNodeId("second"), FlowSemanticKind(FlowNodeKind.ACTION), "second")
+        fun facet(id: String, label: String, members: List<FlowNodeId>) = FlowGraphNode(
+            id = FlowNodeId(id),
+            kind = FlowSemanticKind(FlowNodeKind.SYNTHETIC),
+            label = label,
+            properties = mapOf(
+                "visualFacet" to FlowSemanticValue.BooleanValue(true),
+                "nodeIds" to FlowSemanticValue.ListValue(
+                    members.map { FlowSemanticValue.StringValue(it.value) },
+                ),
+            ),
+        )
+        val inner = facet("facet:inner", "Inner", listOf(first.id))
+        val outer = facet("facet:outer", "Outer", listOf(first.id, second.id, inner.id))
+        val graph = FlowGraphDocument(
+            documentId = FlowDocumentId("nested"),
+            documentRevision = FlowDocumentRevision("1"),
+            producerId = "test",
+            producerVersion = "1",
+            sourceRevision = "1",
+            sourceHash = "hash",
+            nodes = listOf(first, second, inner, outer),
+        )
+
+        val visibility = collapsedFacetVisibility(graph, setOf(outer.id))
+
+        assertEquals(setOf(first.id, second.id), visibility.hiddenNodeIds)
+        assertEquals(setOf(inner.id), visibility.hiddenFacetIds)
     }
 
     @Test

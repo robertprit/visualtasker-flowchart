@@ -87,7 +87,7 @@ public fun FlowchartHost(
         return
     }
     Box(Modifier.fillMaxSize().background(uiConfig.colorTokens.background)) {
-        var collapsedFacetNodeIds by remember(controller, graphDocument.documentRevision) { mutableStateOf<Set<FlowNodeId>>(emptySet()) }
+        val collapsedFacetNodeIds = view.collapsedFacetNodeIds()
         var lockedFacetNodeIds by remember(controller, graphDocument.documentRevision) { mutableStateOf<Set<FlowNodeId>>(emptySet()) }
         FlowCanvas(graphDocument, view, controllerState.runtime, controllerState.interaction, uiConfig, nodeShapeProvider, collapsedFacetNodeIds, lockedFacetNodeIds)
         FlowLabelsAndSemantics(graphDocument, view, controllerState, uiConfig, callbacks, collapsedFacetNodeIds)
@@ -100,11 +100,13 @@ public fun FlowchartHost(
             collapsedFacetNodeIds = collapsedFacetNodeIds,
             lockedFacetNodeIds = lockedFacetNodeIds,
             onToggleFacetCollapsed = { facetId ->
-                collapsedFacetNodeIds = if (facetId in collapsedFacetNodeIds) {
-                    collapsedFacetNodeIds - facetId
-                } else {
-                    collapsedFacetNodeIds + facetId
-                }
+                controller.dispatch(
+                    FlowInteractionAction.SetFacetCollapsed(
+                        facetId = facetId,
+                        collapsed = facetId !in collapsedFacetNodeIds,
+                    ),
+                )
+                controllerState = controller.snapshot()
             },
             onToggleFacetLocked = { facetId ->
                 lockedFacetNodeIds = if (facetId in lockedFacetNodeIds) {
@@ -171,6 +173,7 @@ private fun FlowCanvas(
     Canvas(Modifier.fillMaxSize().testTag("flowchart-canvas")) {
         val viewport = renderView.viewport
         val visibleRuntime = runtime.takeIf { config.runtimeOverlayEnabled }
+        val executionKind = visibleRuntime?.executionKindOrNull() ?: graph.executionKind()
         fun screen(point: FlowPoint) = Offset((point.x * viewport.zoom + viewport.pan.x).toFloat(), (point.y * viewport.zoom + viewport.pan.y).toFloat())
         val collapsedNodeIds = collapsedFacetContentNodeIds(graph, collapsedFacetNodeIds)
         drawBackgroundFacetRegions(graph, renderView, config, collapsedFacetNodeIds, size, ::screen)
@@ -283,7 +286,7 @@ private fun FlowCanvas(
             if (node.isBackgroundFacetNode()) return@forEach
             if (node.id in collapsedNodeIds) return@forEach
             val nodeView = renderView.nodeViews.firstOrNull { it.nodeId == node.id } ?: return@forEach
-            val size = nodeView.size ?: FlowSize(160.0, 72.0)
+            val size = nodeView.size ?: FlowNodeViewDefaults.StandardSize
             val origin = screen(nodeView.position)
             val canvasSize = Size((size.width * viewport.zoom).toFloat(), (size.height * viewport.zoom).toFloat())
             drawNodePorts(
@@ -298,16 +301,17 @@ private fun FlowCanvas(
             if (node.isBackgroundFacetNode()) return@forEach
             if (node.id in collapsedNodeIds) return@forEach
             val nodeView = renderView.nodeViews.firstOrNull { it.nodeId == node.id } ?: return@forEach
-            val size = nodeView.size ?: FlowSize(160.0, 72.0); val origin = screen(nodeView.position); val canvasSize = Size((size.width * viewport.zoom).toFloat(), (size.height * viewport.zoom).toFloat())
+            val size = nodeView.size ?: FlowNodeViewDefaults.StandardSize; val origin = screen(nodeView.position); val canvasSize = Size((size.width * viewport.zoom).toFloat(), (size.height * viewport.zoom).toFloat())
             val runtimeState = visibleRuntime?.nodeStates?.get(node.id)
-            val emphasized = node.id in interaction.selectedNodeIds ||
-                visibleRuntime?.activeNodeId == node.id ||
+            val selected = node.id in interaction.selectedNodeIds
+            val runtimeActive = visibleRuntime?.activeNodeId == node.id ||
                 runtimeState in setOf(FlowRuntimeNodeState.RUNNING, FlowRuntimeNodeState.WAITING, FlowRuntimeNodeState.FAILED)
+            val emphasized = selected || runtimeActive
             val groupAlpha = if (emphasized) 1f else flowNodeGroupAlpha(node.id, graph)
-            val baseNodeFillColor = flowNodeFillColor(node, config.colorTokens)
+            val baseNodeFillColor = flowNodeFillColor(node, config.colorTokens, executionKind)
             val nodeFillColor = baseNodeFillColor.copy(alpha = baseNodeFillColor.alpha * groupAlpha)
             val baseStroke = when {
-                node.id in interaction.selectedNodeIds -> config.colorTokens.selectedStroke
+                selected -> config.colorTokens.selectedStroke
                 runtimeState == FlowRuntimeNodeState.FAILED -> config.colorTokens.failedStroke
                 visibleRuntime?.activeNodeId == node.id -> config.colorTokens.runningStroke
                 runtimeState in setOf(FlowRuntimeNodeState.RUNNING, FlowRuntimeNodeState.WAITING) -> config.colorTokens.runningStroke
@@ -316,15 +320,39 @@ private fun FlowCanvas(
                 else -> config.colorTokens.nodeStroke
             }
             val stroke = baseStroke.copy(alpha = baseStroke.alpha * groupAlpha)
-            val visualPath = resolveNodeShape(nodeShapeProvider, node, canvasSize.width, canvasSize.height)
+            val emphasisColor = when {
+                selected -> config.colorTokens.selectedStroke
+                runtimeState == FlowRuntimeNodeState.FAILED -> config.colorTokens.failedStroke
+                runtimeActive -> config.colorTokens.runningStroke
+                else -> null
+            }
+            val regularStrokeWidth = config.shapeTokens.nodeStrokeWidthDp.dp.toPx()
+            val emphasisStrokeWidth = regularStrokeWidth * if (selected) 2.8f else 2.35f
+            val haloStrokeWidth = regularStrokeWidth * if (selected) 6.4f else 5.2f
+            val presentationNode = if (node.effectiveTerminatorRole() != null) {
+                node.copy(
+                    properties = node.properties +
+                        (FlowLifecycleSemantics.EXECUTION_KIND_PROPERTY to FlowSemanticValue.StringValue(executionKind.wireValue)),
+                )
+            } else {
+                node
+            }
+            val visualPath = resolveNodeShape(nodeShapeProvider, presentationNode, canvasSize.width, canvasSize.height)
             if (visualPath != null) {
                 translate(origin.x, origin.y) {
+                    emphasisColor?.let { color ->
+                        drawPath(
+                            path = visualPath,
+                            color = color.copy(alpha = 0.32f),
+                            style = Stroke(width = haloStrokeWidth, cap = StrokeCap.Round),
+                        )
+                    }
                     drawPath(visualPath, nodeFillColor)
                     drawPath(
                         path = visualPath,
                         color = stroke,
                         style = Stroke(
-                            width = config.shapeTokens.nodeStrokeWidthDp.dp.toPx(),
+                            width = if (emphasisColor != null) emphasisStrokeWidth else regularStrokeWidth,
                             pathEffect = if (node.kind.standard == FlowNodeKind.UNKNOWN_SOURCE || node.kind.extensionId != null) {
                                 PathEffect.dashPathEffect(floatArrayOf(10f, 6f))
                             } else {
@@ -334,8 +362,17 @@ private fun FlowCanvas(
                     )
                 }
             } else {
+                emphasisColor?.let { color ->
+                    drawRoundRect(
+                        color = color.copy(alpha = 0.32f),
+                        topLeft = origin,
+                        size = canvasSize,
+                        cornerRadius = CornerRadius(config.shapeTokens.nodeCornerRadiusDp.dp.toPx()),
+                        style = Stroke(width = haloStrokeWidth),
+                    )
+                }
                 drawRoundRect(nodeFillColor, origin, canvasSize, CornerRadius(config.shapeTokens.nodeCornerRadiusDp.dp.toPx()))
-                drawRoundRect(stroke, origin, canvasSize, CornerRadius(config.shapeTokens.nodeCornerRadiusDp.dp.toPx()), style = Stroke(config.shapeTokens.nodeStrokeWidthDp.dp.toPx(), pathEffect = if (node.kind.standard == FlowNodeKind.UNKNOWN_SOURCE || node.kind.extensionId != null) PathEffect.dashPathEffect(floatArrayOf(10f, 6f)) else null))
+                drawRoundRect(stroke, origin, canvasSize, CornerRadius(config.shapeTokens.nodeCornerRadiusDp.dp.toPx()), style = Stroke(if (emphasisColor != null) emphasisStrokeWidth else regularStrokeWidth, pathEffect = if (node.kind.standard == FlowNodeKind.UNKNOWN_SOURCE || node.kind.extensionId != null) PathEffect.dashPathEffect(floatArrayOf(10f, 6f)) else null))
             }
             if (config.diagnosticMarkersEnabled && node.diagnosticIds.isNotEmpty()) drawCircle(config.colorTokens.diagnostic, 6.dp.toPx(), Offset(origin.x + canvasSize.width - 10.dp.toPx(), origin.y + 10.dp.toPx()))
         }
@@ -438,7 +475,9 @@ private fun DrawScope.drawBackgroundFacetRegions(
     viewportSize: Size,
     screen: (FlowPoint) -> Offset,
 ) {
+    val hiddenFacetIds = collapsedFacetVisibility(graph, collapsedFacetNodeIds).hiddenFacetIds
     flowFacetRegions(graph, view, viewportSize, density, screen)
+        .filterNot { it.facet.id in hiddenFacetIds }
         .forEach { region ->
             val kind = (region.facet.properties["facetKind"] as? FlowSemanticValue.StringValue)?.value.orEmpty()
             val color = when (kind) {
@@ -474,7 +513,10 @@ private fun DrawScope.drawFacetHandles(
     viewportSize: Size,
     screen: (FlowPoint) -> Offset,
 ) {
-    flowFacetRegions(graph, view, viewportSize, density, screen).forEach { region ->
+    val hiddenFacetIds = collapsedFacetVisibility(graph, collapsedFacetNodeIds).hiddenFacetIds
+    flowFacetRegions(graph, view, viewportSize, density, screen)
+        .filterNot { it.facet.id in hiddenFacetIds }
+        .forEach { region ->
         val kind = (region.facet.properties["facetKind"] as? FlowSemanticValue.StringValue)?.value.orEmpty()
         val color = when (kind) {
             "VARIABLE_BULK" -> config.colorTokens.variableNodeFill
@@ -611,7 +653,7 @@ internal fun flowFacetRegions(
     screen: (FlowPoint) -> Offset,
 ): List<FlowFacetRegion> {
     val occupiedNodeBounds = view.nodeViews.map { nodeView ->
-        val nodeSize = nodeView.size ?: FlowSize(160.0, 72.0)
+        val nodeSize = nodeView.size ?: FlowNodeViewDefaults.StandardSize
         val topLeft = screen(nodeView.position)
         val bottomRight = screen(
             FlowPoint(
@@ -629,7 +671,7 @@ internal fun flowFacetRegions(
             val nodeIds = facet.facetContentNodeIds()
             val rects = view.nodeViews
                 .filter { it.nodeId in nodeIds }
-                .map { FlowRect(it.position, it.size ?: FlowSize(160.0, 72.0)) }
+                .map { FlowRect(it.position, it.size ?: FlowNodeViewDefaults.StandardSize) }
             if (rects.isEmpty()) return@mapNotNull null
             val padding = 18f
             val label = facetDisplayLabel(facet)
@@ -744,10 +786,13 @@ internal fun hitFlowFacetHandle(
     view: FlowViewDocument,
     viewportSize: Size? = null,
     densityScale: Float = 1f,
+    collapsedFacetNodeIds: Set<FlowNodeId> = emptySet(),
 ): FlowFacetHandleHit? {
     fun screen(point: FlowPoint) = FlowViewportTransform.graphToScreen(point, view.viewport)
         .let { Offset(it.x.toFloat(), it.y.toFloat()) }
+    val hiddenFacetIds = collapsedFacetVisibility(graph, collapsedFacetNodeIds).hiddenFacetIds
     return flowFacetRegions(graph, view, viewportSize, densityScale, ::screen)
+        .filterNot { it.facet.id in hiddenFacetIds }
         .asReversed()
         .firstNotNullOfOrNull { region ->
             when {
@@ -906,14 +951,39 @@ private fun FlowGraphNode.facetContentNodeIds(): Set<FlowNodeId> =
         .map(::FlowNodeId)
         .toSet()
 
+internal data class CollapsedFacetVisibility(
+    val hiddenNodeIds: Set<FlowNodeId>,
+    val hiddenFacetIds: Set<FlowNodeId>,
+)
+
+internal fun collapsedFacetVisibility(
+    graph: FlowGraphDocument,
+    collapsedFacetNodeIds: Set<FlowNodeId>,
+): CollapsedFacetVisibility {
+    val facets = graph.nodes.filter { it.isBackgroundFacetNode() }
+    val facetsById = facets.associateBy { it.id }
+    val hiddenNodes = linkedSetOf<FlowNodeId>()
+    val queue = ArrayDeque(collapsedFacetNodeIds.filter { it in facetsById.keys })
+    while (queue.isNotEmpty()) {
+        val facetId = queue.removeFirst()
+        facetsById[facetId]?.facetContentNodeIds().orEmpty().forEach { memberId ->
+            if (memberId in facetsById) queue.addLast(memberId) else hiddenNodes += memberId
+        }
+    }
+    val hiddenFacets = facets
+        .filter { facet ->
+            facet.id !in collapsedFacetNodeIds &&
+                facet.facetContentNodeIds().isNotEmpty() &&
+                facet.facetContentNodeIds().all { it in hiddenNodes }
+        }
+        .mapTo(linkedSetOf()) { it.id }
+    return CollapsedFacetVisibility(hiddenNodes, hiddenFacets)
+}
+
 private fun collapsedFacetContentNodeIds(
     graph: FlowGraphDocument,
     collapsedFacetNodeIds: Set<FlowNodeId>,
-): Set<FlowNodeId> =
-    graph.nodes
-        .filter { it.id in collapsedFacetNodeIds }
-        .flatMap { it.facetContentNodeIds() }
-        .toSet()
+): Set<FlowNodeId> = collapsedFacetVisibility(graph, collapsedFacetNodeIds).hiddenNodeIds
 
 internal fun flowchartVisibleEdges(
     edges: List<FlowGraphEdge>,
@@ -999,7 +1069,7 @@ internal fun flowNodePortHits(
     return buildList {
         graph.nodes.forEach { node ->
             val nodeView = view.nodeViews.firstOrNull { it.nodeId == node.id } ?: return@forEach
-            val size = nodeView.size ?: FlowSize(160.0, 72.0)
+            val size = nodeView.size ?: FlowNodeViewDefaults.StandardSize
             val origin = screen(nodeView.position)
             val canvasSize = Size((size.width * viewport.zoom).toFloat(), (size.height * viewport.zoom).toFloat())
             addAll(flowNodePortHitsForSide(node, origin, canvasSize, inputSide = true, portWidthPx, portHeightPx))
@@ -1282,9 +1352,12 @@ internal fun flowEdgeVisualCategory(kind: FlowEdgeKind): FlowchartEdgeVisualCate
 internal fun flowNodeFillColor(
     node: FlowGraphNode,
     tokens: FlowchartColorTokens,
+    executionKind: FlowExecutionKind = FlowExecutionKind.WORKFLOW,
 ): androidx.compose.ui.graphics.Color {
     val blockType = (node.properties["blockType"] as? FlowSemanticValue.StringValue)?.value
     return when {
+        node.effectiveTerminatorRole() != null && executionKind == FlowExecutionKind.RECORDING -> tokens.feedbackNodeFill
+        node.effectiveTerminatorRole() != null && executionKind == FlowExecutionKind.DRY_RUN -> tokens.debugNodeFill
         blockType == null -> when (node.kind.standard) {
             FlowNodeKind.ENTRY,
             FlowNodeKind.EXIT -> tokens.eventNodeFill
@@ -1319,6 +1392,30 @@ internal fun flowNodeFillColor(
         else -> tokens.nodeFill
     }
 }
+
+internal fun flowNodeDisplayLabel(
+    node: FlowGraphNode,
+    executionKind: FlowExecutionKind,
+): String = when (node.effectiveTerminatorRole()) {
+    FlowTerminatorRole.START -> when (executionKind) {
+        FlowExecutionKind.WORKFLOW -> "Workflow Start"
+        FlowExecutionKind.RECORDING -> "Recording Start"
+        FlowExecutionKind.DRY_RUN -> "DryRun Start"
+    }
+    FlowTerminatorRole.END -> when (executionKind) {
+        FlowExecutionKind.WORKFLOW -> "Workflow End"
+        FlowExecutionKind.RECORDING -> "Recording End"
+        FlowExecutionKind.DRY_RUN -> "DryRun End"
+    }
+    null -> node.label
+}
+
+private fun FlowGraphNode.effectiveTerminatorRole(): FlowTerminatorRole? =
+    terminatorRole() ?: when (kind.standard) {
+        FlowNodeKind.ENTRY -> FlowTerminatorRole.START
+        FlowNodeKind.EXIT -> FlowTerminatorRole.END
+        else -> null
+    }
 
 internal data class FlowchartEdgePresentation(
     val connector: Offset?,
@@ -1498,6 +1595,7 @@ private fun FlowGestureLayer(
                     viewportSize = gestureLayerSize.takeIf { it.width > 0 && it.height > 0 }
                         ?.let { Size(it.width.toFloat(), it.height.toFloat()) },
                     densityScale = density.density,
+                    collapsedFacetNodeIds = collapsedFacetNodeIds,
                 )
                 if (facetHit != null && facetHit.action != FlowFacetHandleAction.Drag) {
                     when (facetHit.action) {
@@ -1801,7 +1899,7 @@ private fun dragMovementModeForHit(
 ): FlowMovementMode {
     val graphPoint = FlowViewportTransform.screenToGraph(FlowPoint(offset.x.toDouble(), offset.y.toDouble()), view.viewport)
     val nodeView = view.nodeViews.firstOrNull { it.nodeId == nodeId } ?: return FlowMovementMode.NEXT_FOLLOW_FIRST
-    val size = nodeView.size ?: FlowSize(160.0, 72.0)
+    val size = nodeView.size ?: FlowNodeViewDefaults.StandardSize
     val centerX = nodeView.position.x + size.width / 2.0
     return if (graphPoint.x <= centerX) FlowMovementMode.NEXT_FOLLOW_FIRST else FlowMovementMode.SINGLE
 }
@@ -1865,6 +1963,8 @@ private fun List<Offset>.removeCollinearOffsets(): List<Offset> {
     collapsedFacetNodeIds: Set<FlowNodeId>,
 ) {
     val density = LocalDensity.current
+    val executionKind = state.runtime?.takeIf { config.runtimeOverlayEnabled }?.executionKindOrNull()
+        ?: graph.executionKind()
     val hiddenNodeIds = collapsedFacetContentNodeIds(graph, collapsedFacetNodeIds)
     fun xDp(value: Double) = with(density) { value.toFloat().toDp() }
     Box(Modifier.fillMaxSize()) {
@@ -1881,9 +1981,10 @@ private fun List<Offset>.removeCollinearOffsets(): List<Offset> {
         if (node.id in hiddenNodeIds) return@forEach
         val nodeView = view.nodeViews.firstOrNull { it.nodeId == node.id } ?: return@forEach
         val runtime = state.runtime.takeIf { config.runtimeOverlayEnabled }?.nodeStates?.get(node.id)
+        val displayLabel = flowNodeDisplayLabel(node, executionKind)
         val screen = FlowViewportTransform.graphToScreen(nodeView.position, view.viewport)
-        val width = (nodeView.size?.width ?: 160.0) * view.viewport.zoom
-        val height = (nodeView.size?.height ?: 72.0) * view.viewport.zoom
+        val width = (nodeView.size ?: FlowNodeViewDefaults.StandardSize).width * view.viewport.zoom
+        val height = (nodeView.size ?: FlowNodeViewDefaults.StandardSize).height * view.viewport.zoom
         val detailLevel = flowNodeDetailLevel(node, view.viewport.zoom, width, height)
         val contentPadding = if (width < 112.0 || height < 50.0) 2.dp else 8.dp
         val labelAlpha = if (node.id in state.interaction.selectedNodeIds || runtime in setOf(
@@ -1893,7 +1994,7 @@ private fun List<Offset>.removeCollinearOffsets(): List<Offset> {
             )
         ) 1f else flowNodeGroupAlpha(node.id, graph)
         Box(Modifier.offset(xDp(screen.x), xDp(screen.y)).size(xDp(width), xDp(height)).alpha(labelAlpha).padding(contentPadding).semantics {
-            contentDescription = buildString { append(node.label); append(", "); append(node.kind.displayName ?: node.kind.standard?.name ?: "extension node"); if (runtime != null) { append(", "); append(runtime.name) }; if (config.diagnosticMarkersEnabled && node.diagnosticIds.isNotEmpty()) append(", has diagnostics") }
+            contentDescription = buildString { append(displayLabel); append(", "); append(node.kind.displayName ?: node.kind.standard?.name ?: "extension node"); if (runtime != null) { append(", "); append(runtime.name) }; if (config.diagnosticMarkersEnabled && node.diagnosticIds.isNotEmpty()) append(", has diagnostics") }
             selected = node.id in state.interaction.selectedNodeIds
             onClick("Select node") { callbacks.onNodeSelected(node.id); true }
             onLongClick("Invoke node") { callbacks.onNodeInvoked(node.id); true }
@@ -1901,7 +2002,7 @@ private fun List<Offset>.removeCollinearOffsets(): List<Offset> {
             when (detailLevel) {
                 FlowchartNodeDetailLevel.Full -> Column {
                     Text(
-                        node.label,
+                        displayLabel,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodyMedium,
@@ -1926,7 +2027,7 @@ private fun List<Offset>.removeCollinearOffsets(): List<Offset> {
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        flowNodeCompactLabel(node),
+                        if (node.effectiveTerminatorRole() != null) displayLabel else flowNodeCompactLabel(node),
                         maxLines = 1,
                         overflow = TextOverflow.Clip,
                         style = MaterialTheme.typography.labelSmall,
@@ -1966,7 +2067,7 @@ private fun hitNode(
     return view.nodeViews.asReversed()
         .firstOrNull {
             it.nodeId !in hiddenNodeIds &&
-                FlowRect(it.position, it.size ?: FlowSize(160.0, 72.0)).contains(graphPoint)
+                FlowRect(it.position, it.size ?: FlowNodeViewDefaults.StandardSize).contains(graphPoint)
         }
         ?.nodeId
 }
@@ -1987,13 +2088,13 @@ private fun edgeGraphPoints(edge: FlowGraphEdge, graph: FlowGraphDocument, view:
     val targetNode = graph.nodes.firstOrNull { it.id == edge.targetNodeId } ?: return emptyList()
     val source = view.nodeViews.firstOrNull { it.nodeId == edge.sourceNodeId } ?: return emptyList()
     val target = view.nodeViews.firstOrNull { it.nodeId == edge.targetNodeId } ?: return emptyList()
-    val sourceRect = FlowRect(source.position, source.size ?: FlowSize(160.0, 72.0))
-    val targetRect = FlowRect(target.position, target.size ?: FlowSize(160.0, 72.0))
+    val sourceRect = FlowRect(source.position, source.size ?: FlowNodeViewDefaults.StandardSize)
+    val targetRect = FlowRect(target.position, target.size ?: FlowNodeViewDefaults.StandardSize)
     val start = edgePortOut(edge, sourceNode, sourceRect, targetRect)
     val end = edgePortIn(edge, targetNode, targetRect, sourceRect)
     val obstacles = view.nodeViews
         .filterNot { it.nodeId == edge.sourceNodeId || it.nodeId == edge.targetNodeId }
-        .map { FlowRect(it.position, it.size ?: FlowSize(160.0, 72.0)) }
+        .map { FlowRect(it.position, it.size ?: FlowNodeViewDefaults.StandardSize) }
     val edgeView = view.edgeViews.firstOrNull { it.edgeId == edge.id }
     if (edgeView?.routeLockState == FlowRouteLockState.LOCKED && edgeView.bendPoints.isNotEmpty()) {
         return orthogonalize(listOf(start) + edgeView.bendPoints + end)
@@ -2013,8 +2114,8 @@ private fun edgeGraphPoints(edge: FlowGraphEdge, graph: FlowGraphDocument, view:
 private fun edgeIsWrapCable(edge: FlowGraphEdge, graph: FlowGraphDocument, view: FlowViewDocument): Boolean {
     val source = view.nodeViews.firstOrNull { it.nodeId == edge.sourceNodeId } ?: return false
     val target = view.nodeViews.firstOrNull { it.nodeId == edge.targetNodeId } ?: return false
-    val sourceRect = FlowRect(source.position, source.size ?: FlowSize(160.0, 72.0))
-    val targetRect = FlowRect(target.position, target.size ?: FlowSize(160.0, 72.0))
+    val sourceRect = FlowRect(source.position, source.size ?: FlowNodeViewDefaults.StandardSize)
+    val targetRect = FlowRect(target.position, target.size ?: FlowNodeViewDefaults.StandardSize)
     return edgeIsWrapCable(edge, sourceRect, targetRect)
 }
 
