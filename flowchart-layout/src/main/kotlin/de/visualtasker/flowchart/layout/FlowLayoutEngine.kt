@@ -53,10 +53,14 @@ public object FlowLayoutEngine {
             componentOffset = componentExtent + config.componentSpacing
         }
         val globalVariableNodeIds = globalVariableFacetNodeIds(graph.nodes)
+        val valueInputNodeIds = edges
+            .filter { it.kind == FlowEdgeKind.CONDITION || it.kind == FlowEdgeKind.DATA_FLOW }
+            .mapTo(linkedSetOf()) { it.sourceNodeId }
+            .minus(globalVariableNodeIds)
         applyCodeFlowOffsets(included, edges, allBounds, compatibleView, config, globalVariableNodeIds)
-        resolveOverlaps(allBounds, config)
+        resolveOverlaps(allBounds, config, horizontalFirstNodeIds = valueInputNodeIds)
         compactVerticalGaps(allBounds, config)
-        resolveOverlaps(allBounds, config)
+        resolveOverlaps(allBounds, config, horizontalFirstNodeIds = valueInputNodeIds)
         normalizeBounds(allBounds)
         val diagnostics = mutableListOf<FlowLayoutDiagnostic>()
         val nodesById = included.associateBy { it.id }
@@ -267,7 +271,7 @@ public object FlowLayoutEngine {
             else -> verticalStemCandidates(start, end, source, target, clearance)
         }
         val extraCandidates = if (edge.kind in sideOutputKinds) {
-            rightOuterLaneCandidates(start, end, source, target, obstacles, clearance + lanePadding)
+            rightOuterLaneCandidates(edge, start, end, source, target, obstacles, clearance + lanePadding)
         } else {
             outerLaneCandidates(start, end, source, target, obstacles, clearance + lanePadding)
         }
@@ -376,6 +380,7 @@ public object FlowLayoutEngine {
     }
 
     private fun rightOuterLaneCandidates(
+        edge: FlowGraphEdge,
         start: FlowRoutePoint,
         end: FlowRoutePoint,
         source: FlowRect,
@@ -385,14 +390,23 @@ public object FlowLayoutEngine {
     ): List<List<FlowRoutePoint>> {
         val allRects = obstacles + source + target
         val outerClearance = clearance * 2.0
+        val leftOuter = allRects.minOfOrNull { it.left }?.minus(outerClearance) ?: minOf(source.left, target.left) - outerClearance
         val rightOuter = allRects.maxOfOrNull { it.right }?.plus(outerClearance) ?: maxOf(source.right, target.right) + outerClearance
         val belowOuter = allRects.maxOfOrNull { it.bottom }?.plus(outerClearance) ?: maxOf(source.bottom, target.bottom) + outerClearance
         val aboveOuter = allRects.minOfOrNull { it.top }?.minus(outerClearance) ?: minOf(source.top, target.top) - outerClearance
-        return listOf(
+        val rightCandidates = listOf(
+            listOf(start, FlowRoutePoint(rightOuter, start.y), FlowRoutePoint(rightOuter, aboveOuter), FlowRoutePoint(end.x, aboveOuter), end),
+            listOf(start, FlowRoutePoint(rightOuter, start.y), FlowRoutePoint(rightOuter, belowOuter), FlowRoutePoint(end.x, belowOuter), end),
             listOf(start, FlowRoutePoint(start.x, aboveOuter), FlowRoutePoint(rightOuter, aboveOuter), FlowRoutePoint(rightOuter, end.y), end),
             listOf(start, FlowRoutePoint(start.x, belowOuter), FlowRoutePoint(rightOuter, belowOuter), FlowRoutePoint(rightOuter, end.y), end),
             listOf(start, FlowRoutePoint(rightOuter, start.y), FlowRoutePoint(rightOuter, end.y), end),
         )
+        val leftFallbackCandidates = if (edge.kind == FlowEdgeKind.CONDITION || edge.kind == FlowEdgeKind.DATA_FLOW) listOf(
+            listOf(start, FlowRoutePoint(start.x, aboveOuter), FlowRoutePoint(leftOuter, aboveOuter), FlowRoutePoint(leftOuter, end.y), end),
+            listOf(start, FlowRoutePoint(start.x, belowOuter), FlowRoutePoint(leftOuter, belowOuter), FlowRoutePoint(leftOuter, end.y), end),
+            listOf(start, FlowRoutePoint(leftOuter, start.y), FlowRoutePoint(leftOuter, end.y), end),
+        ) else emptyList()
+        return rightCandidates + leftFallbackCandidates
     }
 
     private fun horizontalOuterLaneCandidates(
@@ -765,6 +779,7 @@ public object FlowLayoutEngine {
     private fun resolveOverlaps(
         bounds: MutableMap<FlowNodeId, FlowRect>,
         config: FlowLayoutConfig,
+        horizontalFirstNodeIds: Set<FlowNodeId> = emptySet(),
     ) {
         val minGap = max(config.routingClearance + 16.0, config.nodeSpacing * 0.55)
         repeat(bounds.size.coerceAtLeast(1) * 5) {
@@ -778,7 +793,9 @@ public object FlowLayoutEngine {
                     if (!current.overlaps(previous, minGap)) continue
                     val shiftDown = previous.bottom + minGap - current.top
                     val shiftRight = previous.right + minGap - current.left
-                    current = if (shiftDown <= shiftRight || current.left < previous.right) {
+                    current = if (currentEntry.key in horizontalFirstNodeIds && ordered[j].key !in horizontalFirstNodeIds) {
+                        current.copy(origin = FlowPoint(current.left + shiftRight, current.top))
+                    } else if (shiftDown <= shiftRight || current.left < previous.right) {
                         current.copy(origin = FlowPoint(current.left, current.top + shiftDown))
                     } else {
                         current.copy(origin = FlowPoint(current.left + shiftRight, current.top))

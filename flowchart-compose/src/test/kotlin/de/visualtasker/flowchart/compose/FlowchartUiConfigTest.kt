@@ -19,6 +19,7 @@ import de.visualtasker.flowchart.domain.FlowSemanticValue
 import de.visualtasker.flowchart.domain.FlowSize
 import de.visualtasker.flowchart.domain.FlowSurfaceId
 import de.visualtasker.flowchart.domain.FlowViewDocument
+import de.visualtasker.flowchart.interaction.FlowInteractionState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -85,6 +86,60 @@ public class FlowchartUiConfigTest {
 
     @Test public fun `default edge stroke is touch readable`() {
         assertTrue(FlowchartShapeTokens().edgeStrokeWidthDp >= 2.6f)
+    }
+
+    @Test
+    public fun `ports scale down visually while staying readable`() {
+        assertEquals(1.0f, flowPortVisualScale(1.0), 0.0f)
+        assertEquals(0.5f, flowPortVisualScale(0.5), 0.0f)
+        assertEquals(0.42f, flowPortVisualScale(0.1), 0.0f)
+    }
+
+    @Test
+    public fun `auxiliary nodes use compact semantic labels at overview zoom`() {
+        val variable = FlowGraphNode(
+            id = FlowNodeId("var"),
+            kind = FlowSemanticKind(FlowNodeKind.PROPERTY_ACCESS),
+            label = "thresholdLow",
+            properties = mapOf("blockType" to FlowSemanticValue.StringValue("variable.reporter")),
+        )
+        val action = FlowGraphNode(
+            id = FlowNodeId("action"),
+            kind = FlowSemanticKind(FlowNodeKind.ACTION),
+            label = "click",
+        )
+
+        assertEquals(FlowchartNodeDetailLevel.Compact, flowNodeDetailLevel(variable, 0.6))
+        assertEquals(FlowchartNodeDetailLevel.Compact, flowNodeDetailLevel(action, 1.0, screenWidth = 80.0, screenHeight = 60.0))
+        assertEquals(FlowchartNodeDetailLevel.Full, flowNodeDetailLevel(action, 0.6))
+        assertEquals("VAR", flowNodeCompactLabel(variable))
+    }
+
+    @Test
+    public fun `very low zoom hides node labels for shape first overview`() {
+        val node = FlowGraphNode(FlowNodeId("node"), FlowSemanticKind(FlowNodeKind.ACTION), "Action")
+
+        assertEquals(FlowchartNodeDetailLevel.Dot, flowNodeDetailLevel(node, 0.18))
+    }
+
+    @Test
+    public fun `edge labels use semantic zoom and remain visible when selected`() {
+        val dataEdge = FlowGraphEdge(
+            FlowEdgeId("data"),
+            FlowNodeId("a"),
+            FlowNodeId("b"),
+            FlowEdgeKind.DATA_FLOW,
+        )
+        val branchEdge = FlowGraphEdge(
+            FlowEdgeId("branch"),
+            FlowNodeId("a"),
+            FlowNodeId("b"),
+            FlowEdgeKind.TRUE_BRANCH,
+        )
+
+        assertFalse(flowEdgeLabelVisible(dataEdge, FlowInteractionState(), zoom = 0.6))
+        assertTrue(flowEdgeLabelVisible(dataEdge, FlowInteractionState(selectedEdgeIds = setOf(dataEdge.id)), zoom = 0.2))
+        assertTrue(flowEdgeLabelVisible(branchEdge, FlowInteractionState(), zoom = 0.5))
     }
 
     @Test

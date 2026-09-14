@@ -456,6 +456,47 @@ public class FlowLayoutEngineTest {
         result.assertNoNodeOverlaps(gap = 1.0)
     }
 
+    @Test public fun `value input nodes evade obstacles sideways instead of drifting far from consumer`() {
+        val decision = FlowGraphNode(FlowNodeId("if"), FlowSemanticKind(FlowNodeKind.DECISION), "if")
+        val thenNode = FlowGraphNode(FlowNodeId("then"), FlowSemanticKind(FlowNodeKind.ACTION), "then")
+        val elseNode = FlowGraphNode(FlowNodeId("else"), FlowSemanticKind(FlowNodeKind.ACTION), "else")
+        val compare = FlowGraphNode(FlowNodeId("compare"), FlowSemanticKind(FlowNodeKind.DECISION), "compare")
+        val left = FlowGraphNode(FlowNodeId("left"), FlowSemanticKind(FlowNodeKind.INPUT), "left")
+        val right = FlowGraphNode(FlowNodeId("right"), FlowSemanticKind(FlowNodeKind.INPUT), "right")
+        val graph = FlowGraphDocument(
+            documentId = FlowDocumentId("value-obstacle-evade"),
+            documentRevision = FlowDocumentRevision("1"),
+            producerId = "fixture",
+            producerVersion = "1",
+            sourceRevision = "1",
+            sourceHash = "hash",
+            nodes = listOf(decision, thenNode, elseNode, compare, left, right),
+            edges = listOf(
+                FlowGraphEdge(FlowEdgeId("if-then"), decision.id, thenNode.id, FlowEdgeKind.TRUE_BRANCH),
+                FlowGraphEdge(FlowEdgeId("if-else"), decision.id, elseNode.id, FlowEdgeKind.FALSE_BRANCH),
+                FlowGraphEdge(FlowEdgeId("condition"), compare.id, decision.id, FlowEdgeKind.CONDITION),
+                FlowGraphEdge(FlowEdgeId("left"), left.id, compare.id, FlowEdgeKind.DATA_FLOW),
+                FlowGraphEdge(FlowEdgeId("right"), right.id, compare.id, FlowEdgeKind.DATA_FLOW),
+            ),
+        )
+
+        val result = FlowLayoutEngine.layout(graph)
+        val decisionBounds = result.nodeBounds.getValue(decision.id)
+        val compareBounds = result.nodeBounds.getValue(compare.id)
+        val leftBounds = result.nodeBounds.getValue(left.id)
+        val rightBounds = result.nodeBounds.getValue(right.id)
+        val consumerCenter = decisionBounds.top + decisionBounds.size.height / 2.0
+        val compareCenter = compareBounds.top + compareBounds.size.height / 2.0
+
+        assertTrue(compareBounds.left > decisionBounds.right)
+        assertTrue(kotlin.math.abs(compareCenter - consumerCenter) < decisionBounds.size.height * 2.0)
+        assertTrue(leftBounds.left >= compareBounds.right)
+        assertTrue(rightBounds.left >= compareBounds.right)
+        result.assertNoNodeOverlaps(gap = 1.0)
+        result.assertOrthogonalRoutes()
+        result.assertRoutesAvoidNodes(graph, gap = 1.0)
+    }
+
     @Test public fun `locked bend routes are normalized to orthogonal segments`() {
         val graph = graph(listOf("a", "b"), listOf("a" to "b"))
         val view = FlowViewDocument(
