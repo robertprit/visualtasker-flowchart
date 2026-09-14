@@ -2,6 +2,8 @@
 package de.visualtasker.flowchart.compose
 
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import de.visualtasker.flowchart.domain.FlowEdgeKind
 import de.visualtasker.flowchart.domain.FlowDocumentId
@@ -143,6 +145,35 @@ public class FlowchartUiConfigTest {
     }
 
     @Test
+    public fun `active rem group dims nodes outside its facet`() {
+        val active = FlowGraphNode(FlowNodeId("active"), FlowSemanticKind(FlowNodeKind.ACTION), "active")
+        val outside = FlowGraphNode(FlowNodeId("outside"), FlowSemanticKind(FlowNodeKind.ACTION), "outside")
+        val facet = FlowGraphNode(
+            id = FlowNodeId("facet:group"),
+            kind = FlowSemanticKind(FlowNodeKind.SYNTHETIC),
+            label = "group",
+            properties = mapOf(
+                "visualFacet" to FlowSemanticValue.BooleanValue(true),
+                "remFlowKind" to FlowSemanticValue.StringValue("GROUP"),
+                "remFlow.active" to FlowSemanticValue.BooleanValue(true),
+                "nodeIds" to FlowSemanticValue.ListValue(listOf(FlowSemanticValue.StringValue(active.id.value))),
+            ),
+        )
+        val graph = FlowGraphDocument(
+            documentId = FlowDocumentId("groups"),
+            documentRevision = FlowDocumentRevision("1"),
+            producerId = "test",
+            producerVersion = "1",
+            sourceRevision = "1",
+            sourceHash = "hash",
+            nodes = listOf(active, outside, facet),
+        )
+
+        assertEquals(1f, flowNodeGroupAlpha(active.id, graph), 0f)
+        assertEquals(0.28f, flowNodeGroupAlpha(outside.id, graph), 0f)
+    }
+
+    @Test
     public fun `arrow head follows final routed segment without changing route`() {
         val route = listOf(Offset(10f, 10f), Offset(40f, 10f), Offset(40f, 50f))
 
@@ -194,7 +225,7 @@ public class FlowchartUiConfigTest {
     }
 
     @Test
-    public fun `facet handle is placed left of region and exposes visible actions`() {
+    public fun `facet card is placed outside region and exposes visible actions`() {
         val node = FlowGraphNode(
             id = FlowNodeId("block:wait"),
             kind = FlowSemanticKind(FlowNodeKind.ACTION),
@@ -230,8 +261,75 @@ public class FlowchartUiConfigTest {
         assertTrue(region.handleBounds.right < region.bounds.left)
         assertTrue(region.handleBounds.top > region.bounds.top)
         assertEquals(FlowFacetHandleAction.Drag, hitFlowFacetHandle(region.gripBounds.center, graph, view)?.action)
+        assertEquals(FlowFacetHandleAction.Select, hitFlowFacetHandle(region.labelBounds.center, graph, view)?.action)
         assertEquals(FlowFacetHandleAction.ToggleCollapse, hitFlowFacetHandle(region.collapseBounds.center, graph, view)?.action)
+        assertEquals(FlowFacetHandleAction.OpenMenu, hitFlowFacetHandle(region.menuBounds.center, graph, view)?.action)
         assertNull(hitFlowFacetHandle(region.lockBounds.center, graph, view))
+    }
+
+    @Test
+    public fun `facet card prefers top edge and remains inside viewport`() {
+        val bounds = Rect(left = 90f, top = 80f, right = 250f, bottom = 210f)
+
+        val card = facetHandleBounds(
+            facetBounds = bounds,
+            width = 180f,
+            height = 32f,
+            gap = 6f,
+            viewportSize = Size(320f, 480f),
+        )
+
+        assertTrue(card.bottom < bounds.top)
+        assertTrue(card.left >= 4f)
+        assertTrue(card.right <= 316f)
+    }
+
+    @Test
+    public fun `facet card moves beside top-clamped region`() {
+        val bounds = Rect(left = 10f, top = 8f, right = 90f, bottom = 160f)
+
+        val card = facetHandleBounds(
+            facetBounds = bounds,
+            width = 150f,
+            height = 32f,
+            gap = 6f,
+            viewportSize = Size(320f, 480f),
+        )
+
+        assertTrue(card.left > bounds.right)
+        assertTrue(card.top >= 4f)
+        assertTrue(card.right <= 316f)
+    }
+
+    @Test
+    public fun `facet card avoids occupied nodes when another top position is free`() {
+        val bounds = Rect(left = 100f, top = 100f, right = 300f, bottom = 260f)
+
+        val card = facetHandleBounds(
+            facetBounds = bounds,
+            width = 100f,
+            height = 30f,
+            gap = 6f,
+            viewportSize = Size(500f, 500f),
+            occupiedBounds = listOf(Rect(left = 95f, top = 60f, right = 198f, bottom = 100f)),
+        )
+
+        assertEquals(200f, card.left, 0f)
+        assertEquals(64f, card.top, 0f)
+        assertEquals(0f, overlapArea(card, Rect(95f, 60f, 198f, 100f)), 0f)
+    }
+
+    @Test
+    public fun `facet labels have semantic fallbacks`() {
+        val facet = FlowGraphNode(
+            id = FlowNodeId("facet:comment"),
+            kind = FlowSemanticKind(FlowNodeKind.SYNTHETIC),
+            label = " ",
+            properties = mapOf("facetKind" to FlowSemanticValue.StringValue("COMMENT_MARKER")),
+        )
+
+        assertEquals("Comment marker", facetDisplayLabel(facet))
+        assertEquals("Kommentarbereich", facetKindDisplayLabel(facet))
     }
 
     @Test
@@ -446,7 +544,7 @@ public class FlowchartUiConfigTest {
     }
 
     @Test
-    public fun `reporter node ports use left inputs and right output`() {
+    public fun `reporter node data ports are available on both horizontal sides`() {
         val reporter = FlowGraphNode(
             id = FlowNodeId("reporter"),
             kind = FlowSemanticKind(FlowNodeKind.INPUT),
@@ -501,10 +599,15 @@ public class FlowchartUiConfigTest {
 
         val hits = flowNodePortHits(graph, view, portWidthPx = 24f, portHeightPx = 10f)
 
-        assertEquals(3, hits.size)
-        assertTrue(hits.first { it.ref.portName == "Input1" }.bounds.contains(Offset(96f, 99f)))
-        assertTrue(hits.first { it.ref.portName == "Input2" }.bounds.contains(Offset(96f, 117f)))
-        assertTrue(hits.first { it.ref.portName == "output" }.bounds.contains(Offset(218f, 108f)))
+        assertTrue(reporter.usesBidirectionalDataPorts())
+        assertEquals(6, hits.size)
+        assertEquals(6, hits.map { it.bounds.topLeft }.distinct().size)
+        listOf("Input1", "Input2", "output").forEach { portName ->
+            val anchors = hits.filter { it.ref.portName == portName }
+            assertEquals(2, anchors.size)
+            assertTrue(anchors.any { it.bounds.center.x < 160f })
+            assertTrue(anchors.any { it.bounds.center.x > 160f })
+        }
     }
 
     @Test

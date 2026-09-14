@@ -79,6 +79,45 @@ public class FlowLayoutEngineTest {
         assertEquals(FlowRouteKind.WRAP_BEZIER, result.routes.getValue(FlowEdgeId("c-if")).kind)
     }
 
+    @Test public fun `explicit rem flow break starts following node at top of next column`() {
+        val graphNodes = listOf(
+            FlowGraphNode(FlowNodeId("start"), FlowSemanticKind(FlowNodeKind.ENTRY), "start"),
+            FlowGraphNode(FlowNodeId("a"), FlowSemanticKind(FlowNodeKind.ACTION), "a"),
+            FlowGraphNode(
+                FlowNodeId("break"),
+                FlowSemanticKind(FlowNodeKind.ANNOTATION),
+                "break",
+                properties = mapOf("remFlowKind" to FlowSemanticValue.StringValue("FLOW_BREAK")),
+            ),
+            FlowGraphNode(FlowNodeId("after"), FlowSemanticKind(FlowNodeKind.ACTION), "after"),
+        )
+        val graph = FlowGraphDocument(
+            documentId = FlowDocumentId("explicit-break"),
+            documentRevision = FlowDocumentRevision("1"),
+            producerId = "fixture",
+            producerVersion = "1",
+            sourceRevision = "1",
+            sourceHash = "hash",
+            nodes = graphNodes,
+            edges = listOf(
+                FlowGraphEdge(FlowEdgeId("start-a"), FlowNodeId("start"), FlowNodeId("a"), FlowEdgeKind.SEQUENCE),
+                FlowGraphEdge(FlowEdgeId("a-break"), FlowNodeId("a"), FlowNodeId("break"), FlowEdgeKind.SEQUENCE),
+                FlowGraphEdge(FlowEdgeId("break-after"), FlowNodeId("break"), FlowNodeId("after"), FlowEdgeKind.SEQUENCE),
+            ),
+        )
+
+        val result = FlowLayoutEngine.layout(
+            graph,
+            config = FlowLayoutConfig(wrapAfterNodes = 20, semanticWrapEnabled = true),
+        )
+        val start = result.nodeBounds.getValue(FlowNodeId("start"))
+        val after = result.nodeBounds.getValue(FlowNodeId("after"))
+
+        assertTrue(after.left > start.right)
+        assertEquals(start.top, after.top, 0.001)
+        assertEquals(FlowRouteKind.WRAP_BEZIER, result.routes.getValue(FlowEdgeId("break-after")).kind)
+    }
+
     @Test public fun `disconnected components and both orientations are finite`() {
         val graph = graph(listOf("a", "b", "c"), listOf("a" to "b"))
         FlowLayoutOrientation.values().forEach { orientation -> assertTrue(FlowLayoutEngine.layout(graph, config = FlowLayoutConfig(orientation = orientation)).isValid) }
@@ -635,6 +674,102 @@ public class FlowLayoutEngineTest {
         result.assertNoNodeOverlaps(gap = 1.0)
     }
 
+    @Test public fun `variable bulk grids fill horizontally or vertically`() {
+        fun layout(mode: String): FlowLayoutResult {
+            val start = FlowGraphNode(FlowNodeId("start-$mode"), FlowSemanticKind(FlowNodeKind.ENTRY), "start")
+            val action = FlowGraphNode(FlowNodeId("action-$mode"), FlowSemanticKind(FlowNodeKind.ACTION), "action")
+            val variables = (0 until 5).map { index ->
+                FlowGraphNode(FlowNodeId("$mode-variable-$index"), FlowSemanticKind(FlowNodeKind.ASSIGNMENT), "v$index")
+            }
+            val facet = FlowGraphNode(
+                FlowNodeId("facet-$mode"),
+                FlowSemanticKind(FlowNodeKind.SYNTHETIC),
+                "Variables",
+                properties = mapOf(
+                    "visualFacet" to FlowSemanticValue.BooleanValue(true),
+                    "facetKind" to FlowSemanticValue.StringValue("VARIABLE_BULK"),
+                    "remFlow.layout" to FlowSemanticValue.StringValue(mode),
+                    "nodeIds" to FlowSemanticValue.ListValue(
+                        variables.map { FlowSemanticValue.StringValue(it.id.value) }
+                    ),
+                ),
+            )
+            val graph = FlowGraphDocument(
+                documentId = FlowDocumentId("bulk-$mode"),
+                documentRevision = FlowDocumentRevision("1"),
+                producerId = "fixture",
+                producerVersion = "1",
+                sourceRevision = "1",
+                sourceHash = "hash",
+                entryNodeId = start.id,
+                nodes = listOf(start, action) + variables + facet,
+                edges = listOf(FlowGraphEdge(FlowEdgeId("sequence-$mode"), start.id, action.id, FlowEdgeKind.SEQUENCE)),
+            )
+            return FlowLayoutEngine.layout(graph)
+        }
+
+        val horizontal = layout("grid-horizontal")
+        val horizontalVariables = (0 until 3).map { horizontal.nodeBounds.getValue(FlowNodeId("grid-horizontal-variable-$it")) }
+        assertTrue(horizontalVariables.map { it.top }.distinct().size == 1)
+        assertTrue(horizontalVariables.zipWithNext().all { (left, right) -> right.left > left.left })
+
+        val vertical = layout("grid-vertical")
+        val verticalVariables = (0 until 3).map { vertical.nodeBounds.getValue(FlowNodeId("grid-vertical-variable-$it")) }
+        assertTrue(verticalVariables.map { it.left }.distinct().size == 1)
+        assertTrue(verticalVariables.zipWithNext().all { (top, bottom) -> bottom.top > top.top })
+    }
+
+    @Test public fun `data flow uses nearest mirrored ports when producer is right of consumer`() {
+        val consumer = FlowGraphNode(
+            FlowNodeId("consumer"),
+            FlowSemanticKind(FlowNodeKind.INPUT),
+            "Consumer",
+            properties = mapOf("inputPorts" to dataPorts("Input1")),
+        )
+        val producer = FlowGraphNode(
+            FlowNodeId("producer"),
+            FlowSemanticKind(FlowNodeKind.PROPERTY_ACCESS),
+            "Producer",
+            properties = mapOf("outputPorts" to dataPorts("output")),
+        )
+        val edge = FlowGraphEdge(
+            FlowEdgeId("data"),
+            producer.id,
+            consumer.id,
+            FlowEdgeKind.DATA_FLOW,
+            label = "Input1",
+        )
+        val graph = FlowGraphDocument(
+            documentId = FlowDocumentId("mirrored-data"),
+            documentRevision = FlowDocumentRevision("1"),
+            producerId = "fixture",
+            producerVersion = "1",
+            sourceRevision = "1",
+            sourceHash = "hash",
+            nodes = listOf(consumer, producer),
+            edges = listOf(edge),
+        )
+        val view = FlowViewDocument(
+            documentId = graph.documentId,
+            compatibleDocumentRevision = graph.documentRevision,
+            surfaceId = FlowSurfaceId("surface"),
+            nodeViews = listOf(
+                FlowNodeView(consumer.id, FlowPoint(0.0, 0.0), FlowSize(120.0, 56.0), pinned = true),
+                FlowNodeView(producer.id, FlowPoint(240.0, 0.0), FlowSize(120.0, 56.0), pinned = true),
+            ),
+        )
+
+        val result = FlowLayoutEngine.layout(graph, compatibleView = view)
+        val consumerBounds = result.nodeBounds.getValue(consumer.id)
+        val producerBounds = result.nodeBounds.getValue(producer.id)
+        val route = result.routes.getValue(edge.id)
+
+        assertEquals(producerBounds.left, route.points.first().x, 0.001)
+        assertEquals(consumerBounds.right, route.points.last().x, 0.001)
+        assertEquals(route.points.first().y, route.points.last().y, 0.001)
+        result.assertOrthogonalRoutes()
+    }
+
     private fun graph(nodes: List<String>, edges: List<Pair<String, String>>): FlowGraphDocument {
         val graphNodes = nodes.map { FlowGraphNode(FlowNodeId(it), FlowSemanticKind(FlowNodeKind.ACTION), it) }
         val graphEdges = edges.mapIndexed { index, (source, target) -> FlowGraphEdge(FlowEdgeId("e$index"), FlowNodeId(source), FlowNodeId(target), FlowEdgeKind.SEQUENCE) }
@@ -649,6 +784,19 @@ public class FlowLayoutEngineTest {
                         "name" to FlowSemanticValue.StringValue(name),
                         "label" to FlowSemanticValue.StringValue(name),
                         "kind" to FlowSemanticValue.StringValue(FlowEdgeKind.SEQUENCE.name),
+                    )
+                )
+            }
+        )
+
+    private fun dataPorts(vararg names: String): FlowSemanticValue =
+        FlowSemanticValue.ListValue(
+            names.map { name ->
+                FlowSemanticValue.ObjectValue(
+                    mapOf(
+                        "name" to FlowSemanticValue.StringValue(name),
+                        "label" to FlowSemanticValue.StringValue(name),
+                        "kind" to FlowSemanticValue.StringValue(FlowEdgeKind.DATA_FLOW.name),
                     )
                 )
             }
