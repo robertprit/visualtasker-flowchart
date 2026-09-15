@@ -327,8 +327,8 @@ private fun FlowCanvas(
                 else -> null
             }
             val regularStrokeWidth = config.shapeTokens.nodeStrokeWidthDp.dp.toPx()
-            val emphasisStrokeWidth = regularStrokeWidth * if (selected) 2.8f else 2.35f
-            val haloStrokeWidth = regularStrokeWidth * if (selected) 6.4f else 5.2f
+            val emphasisStrokeWidth = regularStrokeWidth * if (selected) 3.8f else 2.35f
+            val haloStrokeWidth = regularStrokeWidth * if (selected) 8.2f else 5.2f
             val presentationNode = if (node.effectiveTerminatorRole() != null) {
                 node.copy(
                     properties = node.properties +
@@ -343,7 +343,7 @@ private fun FlowCanvas(
                     emphasisColor?.let { color ->
                         drawPath(
                             path = visualPath,
-                            color = color.copy(alpha = 0.32f),
+                            color = color.copy(alpha = if (selected) 0.48f else 0.32f),
                             style = Stroke(width = haloStrokeWidth, cap = StrokeCap.Round),
                         )
                     }
@@ -364,7 +364,7 @@ private fun FlowCanvas(
             } else {
                 emphasisColor?.let { color ->
                     drawRoundRect(
-                        color = color.copy(alpha = 0.32f),
+                        color = color.copy(alpha = if (selected) 0.48f else 0.32f),
                         topLeft = origin,
                         size = canvasSize,
                         cornerRadius = CornerRadius(config.shapeTokens.nodeCornerRadiusDp.dp.toPx()),
@@ -478,6 +478,7 @@ private fun DrawScope.drawBackgroundFacetRegions(
     val hiddenFacetIds = collapsedFacetVisibility(graph, collapsedFacetNodeIds).hiddenFacetIds
     flowFacetRegions(graph, view, viewportSize, density, screen)
         .filterNot { it.facet.id in hiddenFacetIds }
+        .filter { region -> view.viewport.zoom >= 0.72 || region.facet.id in collapsedFacetNodeIds }
         .forEach { region ->
             val kind = (region.facet.properties["facetKind"] as? FlowSemanticValue.StringValue)?.value.orEmpty()
             val color = when (kind) {
@@ -1128,9 +1129,9 @@ private fun portBounds(
         -> {
             val gap = size.height / (sideCount + 1)
             val x = if (side == FlowchartPortSide.Left) {
-                origin.x - verticalWidth * 0.48f
+                origin.x - verticalWidth * 0.86f
             } else {
-                origin.x + size.width - verticalWidth * 0.52f
+                origin.x + size.width - verticalWidth * 0.14f
             }
             val y = origin.y + gap * (sideIndex + 1) - verticalHeight / 2f
             Rect(
@@ -1146,9 +1147,9 @@ private fun portBounds(
             val gap = size.width / (sideCount + 1)
             val x = origin.x + gap * (sideIndex + 1) - horizontalWidth / 2f
             val y = if (side == FlowchartPortSide.Top) {
-                origin.y - horizontalHeight * 0.48f
+                origin.y - horizontalHeight * 0.86f
             } else {
-                origin.y + size.height - horizontalHeight * 0.52f
+                origin.y + size.height - horizontalHeight * 0.14f
             }
             Rect(
                 left = x,
@@ -1541,7 +1542,7 @@ private fun FlowGestureLayer(
                             y = current.viewport.pan.y + autoPan.y.toDouble(),
                         ),
                     ),
-                )?.let(callbacks.onViewDocumentChanged)
+                )
                 autoPanDragCompensation -= autoPan
                 val compensatedPoint = pointOnScreen!! + autoPanDragCompensation
                 controller.dispatch(
@@ -1580,7 +1581,7 @@ private fun FlowGestureLayer(
                 } else {
                     FlowPoint(panX, panY)
                 }
-                controller.replaceViewport(FlowViewport(nextPan, nextZoom))?.let(callbacks.onViewDocumentChanged)
+                controller.replaceViewport(FlowViewport(nextPan, nextZoom))
                 refresh()
             }
         }

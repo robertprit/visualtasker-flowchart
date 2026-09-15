@@ -141,13 +141,17 @@ public class InteractionTest {
         controller.close(); controller.dispatch(FlowInteractionAction.ClearSelection); assertEquals(1, calls)
     }
 
-    @Test public fun `controller publishes transient viewport state without committing view`() {
+    @Test public fun `controller publishes viewport replacement to view and state listeners`() {
         val controller = FlowchartController(FlowSurfaceId("s"))
         var viewCalls = 0
         var stateCalls = 0
+        var publishedView: FlowViewDocument? = null
         var publishedState: FlowchartControllerState? = null
         controller.setListeners(
-            onViewChanged = { viewCalls++ },
+            onViewChanged = { view ->
+                viewCalls++
+                publishedView = view
+            },
             onStatus = null,
             onStateChanged = { state ->
                 stateCalls++
@@ -159,8 +163,9 @@ public class InteractionTest {
         val viewport = FlowViewport(pan = FlowPoint(12.0, 24.0), zoom = 1.4)
         controller.replaceViewport(viewport)
 
-        assertEquals(0, viewCalls)
+        assertEquals(1, viewCalls)
         assertEquals(1, stateCalls)
+        assertEquals(viewport, publishedView?.viewport)
         assertEquals(viewport, publishedState?.view?.viewport)
         assertEquals(viewport, controller.snapshot().view!!.viewport)
         controller.close()

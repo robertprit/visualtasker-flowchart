@@ -764,8 +764,9 @@ public object FlowLayoutEngine {
             .filterKeys { it !in globalVariableNodeIds }
             .values
         val stemLeft = nonGlobalBounds.minOfOrNull { it.left } ?: 0.0
+        val stemRight = nonGlobalBounds.maxOfOrNull { it.right } ?: stemLeft
         val stemTop = nonGlobalBounds.minOfOrNull { it.top } ?: 0.0
-        var groupRight = stemLeft - config.nodeSpacing * 1.15
+        var groupLeft = stemRight + config.nodeSpacing * 1.15
         facets.forEach { facet ->
             val variables = facet.nodeIds
                 .mapNotNull { id -> bounds[id]?.let { id to it } }
@@ -783,7 +784,6 @@ public object FlowLayoutEngine {
             val horizontalGap = config.nodeSpacing * 0.34
             val verticalGap = config.nodeSpacing * 0.34
             val groupWidth = columns * cellWidth + (columns - 1) * horizontalGap
-            val groupLeft = groupRight - groupWidth
             variables.forEachIndexed { index, (id, rect) ->
                 if (id in pinnedNodeIds) return@forEachIndexed
                 val (column, row) = when (facet.layout) {
@@ -800,7 +800,7 @@ public object FlowLayoutEngine {
                     ),
                 )
             }
-            groupRight = groupLeft - config.nodeSpacing
+            groupLeft += groupWidth + config.nodeSpacing
         }
     }
 

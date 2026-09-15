@@ -631,7 +631,7 @@ public class FlowLayoutEngineTest {
         assertTrue(firstLane != secondLane)
     }
 
-    @Test public fun `variable bulk facet anchors globals before main flow`() {
+    @Test public fun `variable bulk facet anchors globals beside main flow start`() {
         val start = FlowGraphNode(FlowNodeId("start"), FlowSemanticKind(FlowNodeKind.ENTRY), "start")
         val setLow = FlowGraphNode(FlowNodeId("setLow"), FlowSemanticKind(FlowNodeKind.ASSIGNMENT), "set low")
         val setHigh = FlowGraphNode(FlowNodeId("setHigh"), FlowSemanticKind(FlowNodeKind.ASSIGNMENT), "set high")
@@ -674,7 +674,7 @@ public class FlowLayoutEngineTest {
         val highBounds = result.nodeBounds.getValue(setHigh.id)
         val compareBounds = result.nodeBounds.getValue(compare.id)
 
-        assertTrue(lowBounds.right < startBounds.left)
+        assertTrue(lowBounds.left > startBounds.right)
         assertEquals(lowBounds.left, highBounds.left, 0.001)
         assertTrue(kotlin.math.abs(highBounds.top - lowBounds.top) > 1.0)
         assertTrue(compareBounds.left >= startBounds.left)

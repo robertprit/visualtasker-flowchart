@@ -101,6 +101,7 @@ public class FlowchartController(
         require(viewport.zoom.isFinite() && viewport.zoom > 0.0)
         require(viewport.pan.x.isFinite() && viewport.pan.y.isFinite())
         val view: FlowViewDocument
+        val viewCallback: ((FlowViewDocument) -> Unit)?
         val stateCallback: ((FlowchartControllerState) -> Unit)?
         val updatedState: FlowchartControllerState
         synchronized(lock) {
@@ -109,8 +110,10 @@ public class FlowchartController(
             view = current.copy(viewport = viewport)
             state = state.copy(view = view)
             updatedState = state
+            viewCallback = viewListener
             stateCallback = stateListener
         }
+        viewCallback?.invoke(view)
         stateCallback?.invoke(updatedState)
         return view
     }
