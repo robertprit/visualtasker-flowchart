@@ -185,6 +185,24 @@ public class InteractionTest {
         controller.close()
     }
 
+    @Test public fun `projection layout preserves hidden node geometry`() {
+        val hidden = FlowGraphNode(FlowNodeId("hidden"), FlowSemanticKind(FlowNodeKind.INPUT), "hidden")
+        val fullGraph = graph.copy(nodes = graph.nodes + hidden)
+        val hiddenPosition = FlowPoint(900.0, 700.0)
+        val fullView = view.copy(
+            nodeViews = view.nodeViews + FlowNodeView(hidden.id, hiddenPosition, FlowSize(24.0, 24.0)),
+        )
+        val projection = fullGraph.copy(nodes = graph.nodes, edges = graph.edges)
+        val controller = FlowchartController(FlowSurfaceId("s"))
+        controller.attachGraph(fullGraph, fullView)
+
+        val arranged = controller.replaceLayout(projectionGraph = projection)!!
+
+        assertEquals(hiddenPosition, arranged.nodeViews.single { it.nodeId == hidden.id }.position)
+        assertTrue(arranged.nodeViews.single { it.nodeId == nodes[1].id }.position.y > 0.0)
+        controller.close()
+    }
+
     @Test public fun `facet collapse persists in view and participates in undo redo`() {
         val facet = FlowGraphNode(
             id = FlowNodeId("facet"),

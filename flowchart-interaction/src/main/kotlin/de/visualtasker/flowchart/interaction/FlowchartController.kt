@@ -118,11 +118,46 @@ public class FlowchartController(
         return view
     }
 
-    public fun replaceLayout(config: FlowLayoutConfig = layoutConfig): FlowViewDocument? {
+    public fun replaceLayout(
+        config: FlowLayoutConfig = layoutConfig,
+        projectionGraph: FlowGraphDocument? = null,
+    ): FlowViewDocument? {
         val callback: ((FlowViewDocument) -> Unit)?
         val graph = synchronized(lock) { if (state.closed) return null else state.graph } ?: return null
-        val layout = FlowLayoutEngine.layout(graph, nodeMetrics, config, state.view)
-        val newView = state.view?.copy(nodeViews = graph.visibleLayoutNodes().map { node -> val bounds = layout.nodeBounds[node.id] ?: return@map FlowNodeView(node.id, FlowPoint(0.0, 0.0)); FlowNodeView(node.id, bounds.origin, bounds.size) }, edgeViews = layout.routes.values.map { route -> FlowEdgeView(route.edgeId, route.points.drop(1).dropLast(1).map { it.asPoint() }) }, layoutMetadata = FlowLayoutMetadata("hierarchical", "1", config.deterministicSeed)) ?: return null
+        val layoutGraph = projectionGraph?.also { projection ->
+            require(projection.documentId == graph.documentId) { "Projection graph must belong to the attached document" }
+            require(projection.documentRevision == graph.documentRevision) { "Projection graph must match the attached revision" }
+            val graphNodeIds = graph.nodes.mapTo(hashSetOf()) { it.id }
+            val graphEdgeIds = graph.edges.mapTo(hashSetOf()) { it.id }
+            require(projection.nodes.all { it.id in graphNodeIds }) { "Projection graph contains unknown nodes" }
+            require(projection.edges.all { it.id in graphEdgeIds }) { "Projection graph contains unknown edges" }
+        } ?: graph
+        val currentView = state.view ?: return null
+        val layout = FlowLayoutEngine.layout(layoutGraph, nodeMetrics, config, currentView)
+        val arrangedNodeIds = layoutGraph.visibleLayoutNodes().mapTo(hashSetOf()) { it.id }
+        val arrangedEdgeIds = layoutGraph.edges.mapTo(hashSetOf()) { it.id }
+        val existingNodes = currentView.nodeViews.associateBy { it.nodeId }
+        val existingEdges = currentView.edgeViews.associateBy { it.edgeId }
+        val newView = currentView.copy(
+            nodeViews = graph.visibleLayoutNodes().map { node ->
+                val bounds = layout.nodeBounds[node.id]
+                when {
+                    node.id in arrangedNodeIds && bounds != null -> FlowNodeView(node.id, bounds.origin, bounds.size)
+                    else -> existingNodes[node.id] ?: FlowNodeView(node.id, FlowPoint(0.0, 0.0), nodeMetrics.defaultSize)
+                }
+            },
+            edgeViews = graph.edges.mapNotNull { edge ->
+                val route = layout.routes[edge.id]
+                when {
+                    edge.id in arrangedEdgeIds && route != null -> FlowEdgeView(
+                        route.edgeId,
+                        route.points.drop(1).dropLast(1).map { it.asPoint() },
+                    )
+                    else -> existingEdges[edge.id]
+                }
+            },
+            layoutMetadata = FlowLayoutMetadata("hierarchical", "1", config.deterministicSeed),
+        )
         synchronized(lock) { if (state.closed) return null; state = state.copy(view = newView); callback = viewListener }
         callback?.invoke(newView)
         return newView

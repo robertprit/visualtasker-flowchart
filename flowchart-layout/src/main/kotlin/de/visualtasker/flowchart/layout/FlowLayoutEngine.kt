@@ -62,6 +62,7 @@ public object FlowLayoutEngine {
         resolveOverlaps(allBounds, config, horizontalFirstNodeIds = valueInputNodeIds)
         compactVerticalGaps(allBounds, config)
         resolveOverlaps(allBounds, config, horizontalFirstNodeIds = valueInputNodeIds)
+        placeTerminalNodesLast(included, edges, allBounds, config)
         normalizeBounds(allBounds)
         val diagnostics = mutableListOf<FlowLayoutDiagnostic>()
         val nodesById = included.associateBy { it.id }
@@ -219,7 +220,7 @@ public object FlowLayoutEngine {
         laneIndex: Int,
     ): FlowRoute {
         val locked = view?.edgeViews?.firstOrNull { it.edgeId == edge.id && it.routeLockState == FlowRouteLockState.LOCKED }
-        val start = portOut(edge, sourceNode, source, target, config.orientation)
+        val start = portOut(edge, sourceNode, source, target, config.orientation, laneIndex)
         val end = portIn(edge, targetNode, target, source, config.orientation)
         if (locked != null && locked.bendPoints.isNotEmpty()) return makeRoute(edge.id, FlowRouteKind.ORTHOGONAL, orthogonalize(listOf(start) + locked.bendPoints.map { FlowRoutePoint(it.x, it.y) } + end), true)
         if (edge.id in backEdges && edge.kind in loopBackRouteKinds) {
@@ -293,7 +294,7 @@ public object FlowLayoutEngine {
             FlowEdgeKind.ELSE_IF_BRANCH,
             FlowEdgeKind.CONDITION,
             FlowEdgeKind.DATA_FLOW,
-            -> branchSideCandidates(start, end, source, target, clearance) +
+            -> branchSideCandidates(start, end, source, target, clearance + lanePadding) +
                 sideLaneCandidates(start, end, source, target, clearance + lanePadding)
             else -> verticalStemCandidates(start, end, source, target, clearance)
         }
@@ -478,7 +479,7 @@ public object FlowLayoutEngine {
     private fun laneIndexes(edges: List<FlowGraphEdge>): Map<FlowEdgeId, Int> =
         edges
             .filter { it.kind in routedLaneKinds }
-            .groupBy { it.sourceNodeId to it.kind }
+            .groupBy { it.sourceNodeId }
             .flatMap { (_, group) ->
                 group
                     .sortedWith(compareBy<FlowGraphEdge> { edgeKindOrder(it.kind) }.thenBy { it.label.orEmpty() }.thenBy { it.id.value })
@@ -506,6 +507,8 @@ public object FlowLayoutEngine {
             alignJoinNodes(nodes, edges, bounds, pinnedNodeIds, config)
             alignValueInputs(edges, bounds, pinnedNodeIds, config, globalVariableNodeIds)
             alignVariableBulkFacets(variableBulkFacets, globalVariableNodeIds, bounds, pinnedNodeIds, config)
+        } else {
+            alignValueInputsPerpendicular(edges, bounds, pinnedNodeIds, config, globalVariableNodeIds)
         }
         edges
             .filter { it.kind in branchKinds }
@@ -519,14 +522,16 @@ public object FlowLayoutEngine {
                         val target = bounds[edge.targetNodeId] ?: return@forEachIndexed
                         val adjusted = when (config.orientation) {
                             FlowLayoutOrientation.TOP_TO_BOTTOM -> {
+                                val horizontalPitch = nodeMetricsPitch(config, horizontal = true)
+                                val verticalPitch = nodeMetricsPitch(config, horizontal = false)
                                 val branchPosition = when (edge.kind) {
                                     FlowEdgeKind.TRUE_BRANCH -> FlowPoint(
-                                        x = source.right + config.nodeSpacing,
-                                        y = source.top,
+                                        x = source.left + horizontalPitch,
+                                        y = source.top + verticalPitch,
                                     )
                                     FlowEdgeKind.ELSE_IF_BRANCH -> FlowPoint(
-                                        x = source.right + config.nodeSpacing * 1.45 + index * config.nodeSpacing * 0.35,
-                                        y = source.bottom + config.layerSpacing * 0.36 + index * (target.size.height + config.nodeSpacing * 0.35),
+                                        x = source.left + horizontalPitch * (index + 1),
+                                        y = source.top + verticalPitch * (index + 1),
                                     )
                                     FlowEdgeKind.LOOP_BODY,
                                     FlowEdgeKind.LOOP_BACK,
@@ -538,20 +543,36 @@ public object FlowLayoutEngine {
                                     FlowEdgeKind.LOOP_EXIT,
                                     -> FlowPoint(
                                         x = source.left + (source.size.width - target.size.width) / 2.0,
-                                        y = source.bottom + config.layerSpacing * 0.8 + index * config.nodeSpacing * 0.25,
+                                        y = source.top + verticalPitch * (index + 1),
                                     )
                                     else -> target.origin
                                 }
                                 target.copy(origin = branchPosition)
                             }
-                            FlowLayoutOrientation.LEFT_TO_RIGHT -> target.copy(
-                                origin = FlowPoint(
-                                    x = target.origin.x + index * (config.layerSpacing * 0.34),
-                                    y = target.origin.y + index * (config.nodeSpacing * 0.62),
+                            FlowLayoutOrientation.LEFT_TO_RIGHT -> {
+                                val horizontalPitch = nodeMetricsPitch(config, horizontal = true)
+                                val verticalPitch = nodeMetricsPitch(config, horizontal = false)
+                                target.copy(
+                                    origin = when (edge.kind) {
+                                        FlowEdgeKind.FALSE_BRANCH,
+                                        FlowEdgeKind.LOOP_EXIT -> FlowPoint(source.left + horizontalPitch, source.top)
+                                        else -> FlowPoint(
+                                            source.left + horizontalPitch * (index + 1),
+                                            source.top + verticalPitch * (index + 1),
+                                        )
+                                    },
                                 )
+                            }
+                        }
+                        val deltaX = adjusted.left - target.left
+                        val deltaY = adjusted.top - target.top
+                        branchLaneNodeIds(edge.targetNodeId, nodes, edges).forEach { branchNodeId ->
+                            if (branchNodeId in pinnedNodeIds) return@forEach
+                            val branchBounds = bounds[branchNodeId] ?: return@forEach
+                            bounds[branchNodeId] = branchBounds.copy(
+                                origin = FlowPoint(branchBounds.left + deltaX, branchBounds.top + deltaY),
                             )
                         }
-                        bounds[edge.targetNodeId] = adjusted
                     }
             }
         if (config.orientation == FlowLayoutOrientation.TOP_TO_BOTTOM) {
@@ -566,6 +587,29 @@ public object FlowLayoutEngine {
             alignValueInputs(edges, bounds, pinnedNodeIds, config, globalVariableNodeIds)
             alignVariableBulkFacets(variableBulkFacets, globalVariableNodeIds, bounds, pinnedNodeIds, config)
         }
+    }
+
+    private fun branchLaneNodeIds(
+        entryNodeId: FlowNodeId,
+        nodes: List<FlowGraphNode>,
+        edges: List<FlowGraphEdge>,
+    ): Set<FlowNodeId> {
+        val syntheticJoinIds = nodes
+            .filter { it.properties["syntheticJoin"] == FlowSemanticValue.BooleanValue(true) }
+            .mapTo(linkedSetOf()) { it.id }
+        val outgoing = edges
+            .filter { it.kind == FlowEdgeKind.SEQUENCE }
+            .groupBy { it.sourceNodeId }
+        val result = linkedSetOf(entryNodeId)
+        val queue = ArrayDeque<FlowNodeId>().apply { add(entryNodeId) }
+        while (queue.isNotEmpty()) {
+            outgoing[queue.removeFirst()].orEmpty()
+                .sortedBy { it.id.value }
+                .map { it.targetNodeId }
+                .filterNot { it in syntheticJoinIds }
+                .forEach { target -> if (result.add(target)) queue.add(target) }
+        }
+        return result
     }
 
     private fun applyWrappedCodeFlow(
@@ -735,7 +779,7 @@ public object FlowLayoutEngine {
                 val consumer = bounds[targetId] ?: return@forEach
                 val orderedIncoming = incoming
                     .sortedWith(compareBy<FlowGraphEdge> { if (it.kind == FlowEdgeKind.CONDITION) 0 else 1 }.thenBy { it.label.orEmpty() }.thenBy { it.id.value })
-                val valueColumnX = consumer.right + config.nodeSpacing * 0.62
+                val valueColumnX = consumer.left + nodeMetricsPitch(config, horizontal = true)
                 val total = orderedIncoming.size
                 orderedIncoming
                     .forEachIndexed { index, edge ->
@@ -747,6 +791,33 @@ public object FlowLayoutEngine {
                                 x = valueColumnX,
                                 y = consumer.top + (consumer.size.height - value.size.height) / 2.0 +
                                     slotOffset * (value.size.height + config.nodeSpacing * 0.32),
+                            ),
+                        )
+                    }
+            }
+    }
+
+    private fun alignValueInputsPerpendicular(
+        edges: List<FlowGraphEdge>,
+        bounds: MutableMap<FlowNodeId, FlowRect>,
+        pinnedNodeIds: Set<FlowNodeId>,
+        config: FlowLayoutConfig,
+        globalVariableNodeIds: Set<FlowNodeId>,
+    ) {
+        edges
+            .filter { it.kind == FlowEdgeKind.CONDITION || it.kind == FlowEdgeKind.DATA_FLOW }
+            .groupBy { it.targetNodeId }
+            .forEach { (targetId, incoming) ->
+                val consumer = bounds[targetId] ?: return@forEach
+                incoming
+                    .sortedWith(compareBy<FlowGraphEdge> { it.label.orEmpty() }.thenBy { it.id.value })
+                    .forEachIndexed { index, edge ->
+                        if (edge.sourceNodeId in pinnedNodeIds || edge.sourceNodeId in globalVariableNodeIds) return@forEachIndexed
+                        val value = bounds[edge.sourceNodeId] ?: return@forEachIndexed
+                        bounds[edge.sourceNodeId] = value.copy(
+                            origin = FlowPoint(
+                                x = consumer.left + (consumer.size.width - value.size.width) / 2.0,
+                                y = consumer.top + nodeMetricsPitch(config, horizontal = false) * (index + 1),
                             ),
                         )
                     }
@@ -905,6 +976,49 @@ public object FlowLayoutEngine {
         }
     }
 
+    private fun nodeMetricsPitch(config: FlowLayoutConfig, horizontal: Boolean): Double =
+        if (horizontal) FlowNodeViewDefaults.StandardSize.width + config.nodeSpacing
+        else FlowNodeViewDefaults.StandardSize.height + config.layerSpacing
+
+    private fun placeTerminalNodesLast(
+        nodes: List<FlowGraphNode>,
+        edges: List<FlowGraphEdge>,
+        bounds: MutableMap<FlowNodeId, FlowRect>,
+        config: FlowLayoutConfig,
+    ) {
+        val terminalIds = nodes
+            .filter { it.kind.standard == FlowNodeKind.EXIT }
+            .map { it.id }
+            .toSet()
+        if (terminalIds.isEmpty()) return
+        val nonTerminalBottom = bounds
+            .filterKeys { it !in terminalIds }
+            .values
+            .maxOfOrNull { it.bottom }
+            ?: return
+        terminalIds.sortedBy { it.value }.forEachIndexed { index, id ->
+            val rect = bounds[id] ?: return@forEachIndexed
+            val incomingSource = edges
+                .filter { it.targetNodeId == id }
+                .mapNotNull { bounds[it.sourceNodeId] }
+                .maxByOrNull { it.bottom }
+            val trunkLeft = incomingSource?.let { it.left + (it.size.width - rect.size.width) / 2.0 } ?: rect.left
+            bounds[id] = rect.copy(
+                origin = when (config.orientation) {
+                    FlowLayoutOrientation.TOP_TO_BOTTOM -> FlowPoint(
+                        trunkLeft,
+                        nonTerminalBottom + config.layerSpacing + index * nodeMetricsPitch(config, horizontal = false),
+                    )
+                    FlowLayoutOrientation.LEFT_TO_RIGHT -> FlowPoint(
+                        bounds.filterKeys { it !in terminalIds }.values.maxOf { it.right } + config.nodeSpacing +
+                            index * nodeMetricsPitch(config, horizontal = true),
+                        incomingSource?.let { it.top + (it.size.height - rect.size.height) / 2.0 } ?: rect.top,
+                    )
+                },
+            )
+        }
+    }
+
     private fun normalizeBounds(bounds: MutableMap<FlowNodeId, FlowRect>) {
         val minX = bounds.values.minOfOrNull { it.left } ?: 0.0
         val minY = bounds.values.minOfOrNull { it.top } ?: 0.0
@@ -926,7 +1040,9 @@ public object FlowLayoutEngine {
         rect: FlowRect,
         targetRect: FlowRect,
         orientation: FlowLayoutOrientation,
+        laneIndex: Int,
     ): FlowRoutePoint {
+        branchBottomPort(edge, node, rect, orientation, laneIndex)?.let { return it }
         if (orientation == FlowLayoutOrientation.TOP_TO_BOTTOM && edge.kind in setOf(FlowEdgeKind.LOOP_BODY, FlowEdgeKind.LOOP_BACK)) {
             return FlowRoutePoint(rect.left, (rect.top + rect.bottom) / 2.0)
         }
@@ -948,6 +1064,36 @@ public object FlowLayoutEngine {
                 orientation == FlowLayoutOrientation.TOP_TO_BOTTOM && edge.kind == FlowEdgeKind.FALSE_BRANCH -> FlowRoutePoint((rect.left + rect.right) / 2.0, rect.bottom)
                 else -> if (orientation == FlowLayoutOrientation.TOP_TO_BOTTOM) FlowRoutePoint((rect.left + rect.right) / 2, rect.bottom) else FlowRoutePoint(rect.right, (rect.top + rect.bottom) / 2)
             }
+    }
+
+    private fun branchBottomPort(
+        edge: FlowGraphEdge,
+        node: FlowGraphNode,
+        rect: FlowRect,
+        orientation: FlowLayoutOrientation,
+        laneIndex: Int,
+    ): FlowRoutePoint? {
+        if (orientation != FlowLayoutOrientation.TOP_TO_BOTTOM || edge.kind !in setOf(
+                FlowEdgeKind.TRUE_BRANCH,
+                FlowEdgeKind.ELSE_IF_BRANCH,
+                FlowEdgeKind.FALSE_BRANCH,
+            )
+        ) return null
+        val ports = node.flowPorts("outputPorts").filter { it.kind in setOf(
+            FlowEdgeKind.TRUE_BRANCH,
+            FlowEdgeKind.ELSE_IF_BRANCH,
+            FlowEdgeKind.FALSE_BRANCH,
+        ) }
+        val truePorts = ports.filter { it.kind == FlowEdgeKind.TRUE_BRANCH || it.kind == FlowEdgeKind.ELSE_IF_BRANCH }
+        val slots = (truePorts.size + 2).coerceAtLeast(3)
+        val x = if (edge.kind == FlowEdgeKind.FALSE_BRANCH) {
+            rect.left + rect.size.width / slots
+        } else {
+            val index = truePorts.indexOfFirst { it.name == edge.label }.takeIf { it >= 0 } ?: 0
+            val orderedIndex = if (truePorts.isEmpty()) laneIndex else index
+            rect.left + rect.size.width * (0.8 - orderedIndex * 0.15).coerceIn(0.35, 0.8)
+        }
+        return FlowRoutePoint(x, rect.bottom)
     }
 
     private fun portIn(

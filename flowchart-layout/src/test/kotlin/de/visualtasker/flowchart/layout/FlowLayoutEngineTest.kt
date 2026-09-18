@@ -631,6 +631,98 @@ public class FlowLayoutEngineTest {
         assertTrue(firstLane != secondLane)
     }
 
+    @Test public fun `decision branches use a grid step and bottom ordered ports`() {
+        val decision = FlowGraphNode(FlowNodeId("if-grid"), FlowSemanticKind(FlowNodeKind.DECISION), "if")
+        val falseNode = FlowGraphNode(FlowNodeId("false-grid"), FlowSemanticKind(FlowNodeKind.ACTION), "false")
+        val trueNode = FlowGraphNode(FlowNodeId("true-grid"), FlowSemanticKind(FlowNodeKind.ACTION), "true")
+        val graph = FlowGraphDocument(
+            documentId = FlowDocumentId("branch-grid"), documentRevision = FlowDocumentRevision("1"),
+            producerId = "fixture", producerVersion = "1", sourceRevision = "1", sourceHash = "hash",
+            nodes = listOf(decision, falseNode, trueNode),
+            edges = listOf(
+                FlowGraphEdge(FlowEdgeId("false-grid"), decision.id, falseNode.id, FlowEdgeKind.FALSE_BRANCH),
+                FlowGraphEdge(FlowEdgeId("true-grid"), decision.id, trueNode.id, FlowEdgeKind.TRUE_BRANCH, "TRUE"),
+            ),
+        )
+
+        val result = FlowLayoutEngine.layout(graph)
+        val source = result.nodeBounds.getValue(decision.id)
+        val falseBounds = result.nodeBounds.getValue(falseNode.id)
+        val trueBounds = result.nodeBounds.getValue(trueNode.id)
+        val falseStart = result.routes.getValue(FlowEdgeId("false-grid")).points.first()
+        val trueStart = result.routes.getValue(FlowEdgeId("true-grid")).points.first()
+
+        assertEquals(source.left, falseBounds.left, 0.01)
+        assertTrue(trueBounds.left >= source.left + FlowNodeViewDefaults.StandardSize.width * 2.0)
+        assertTrue(falseBounds.top >= source.top + FlowNodeViewDefaults.StandardSize.height * 2.0)
+        assertEquals(source.bottom, falseStart.y, 0.01)
+        assertEquals(source.bottom, trueStart.y, 0.01)
+        assertTrue(falseStart.x < trueStart.x)
+    }
+
+    @Test public fun `exit is placed after every non terminal node`() {
+        val start = FlowGraphNode(FlowNodeId("terminal-start"), FlowSemanticKind(FlowNodeKind.ENTRY), "start")
+        val action = FlowGraphNode(FlowNodeId("terminal-action"), FlowSemanticKind(FlowNodeKind.ACTION), "action")
+        val exit = FlowGraphNode(FlowNodeId("terminal-exit"), FlowSemanticKind(FlowNodeKind.EXIT), "stop")
+        val graph = FlowGraphDocument(
+            documentId = FlowDocumentId("terminal-last"), documentRevision = FlowDocumentRevision("1"),
+            producerId = "fixture", producerVersion = "1", sourceRevision = "1", sourceHash = "hash",
+            nodes = listOf(start, action, exit),
+            edges = listOf(
+                FlowGraphEdge(FlowEdgeId("to-action"), start.id, action.id, FlowEdgeKind.SEQUENCE),
+                FlowGraphEdge(FlowEdgeId("to-exit"), action.id, exit.id, FlowEdgeKind.SEQUENCE),
+            ),
+        )
+
+        val result = FlowLayoutEngine.layout(graph)
+        val exitBounds = result.nodeBounds.getValue(exit.id)
+        val latestOtherBottom = result.nodeBounds.filterKeys { it != exit.id }.values.maxOf { it.bottom }
+
+        assertTrue(exitBounds.top >= latestOtherBottom + FlowNodeViewDefaults.StandardSize.height)
+    }
+
+    @Test public fun `branch actions stay in their lane and join below both branches`() {
+        val decision = FlowGraphNode(FlowNodeId("lane-if"), FlowSemanticKind(FlowNodeKind.DECISION), "if")
+        val trueEntry = FlowGraphNode(FlowNodeId("lane-true"), FlowSemanticKind(FlowNodeKind.ACTION), "true")
+        val trueAction = FlowGraphNode(FlowNodeId("lane-true-action"), FlowSemanticKind(FlowNodeKind.ACTION), "true action")
+        val falseEntry = FlowGraphNode(FlowNodeId("lane-false"), FlowSemanticKind(FlowNodeKind.ACTION), "false")
+        val falseAction = FlowGraphNode(FlowNodeId("lane-false-action"), FlowSemanticKind(FlowNodeKind.ACTION), "false action")
+        val join = FlowGraphNode(
+            FlowNodeId("lane-join"), FlowSemanticKind(FlowNodeKind.SYNTHETIC), "join",
+            properties = mapOf(
+                "syntheticJoin" to FlowSemanticValue.BooleanValue(true),
+                "visualFacet" to FlowSemanticValue.BooleanValue(true),
+                "ownerNodeId" to FlowSemanticValue.StringValue(decision.id.value),
+            ),
+        )
+        val graph = FlowGraphDocument(
+            documentId = FlowDocumentId("branch-lanes"), documentRevision = FlowDocumentRevision("1"),
+            producerId = "fixture", producerVersion = "1", sourceRevision = "1", sourceHash = "hash",
+            nodes = listOf(decision, trueEntry, trueAction, falseEntry, falseAction, join),
+            edges = listOf(
+                FlowGraphEdge(FlowEdgeId("lane-true-edge"), decision.id, trueEntry.id, FlowEdgeKind.TRUE_BRANCH),
+                FlowGraphEdge(FlowEdgeId("lane-false-edge"), decision.id, falseEntry.id, FlowEdgeKind.FALSE_BRANCH),
+                FlowGraphEdge(FlowEdgeId("lane-true-next"), trueEntry.id, trueAction.id, FlowEdgeKind.SEQUENCE),
+                FlowGraphEdge(FlowEdgeId("lane-false-next"), falseEntry.id, falseAction.id, FlowEdgeKind.SEQUENCE),
+                FlowGraphEdge(FlowEdgeId("lane-true-join"), trueAction.id, join.id, FlowEdgeKind.SEQUENCE),
+                FlowGraphEdge(FlowEdgeId("lane-false-join"), falseAction.id, join.id, FlowEdgeKind.SEQUENCE),
+            ),
+        )
+
+        val result = FlowLayoutEngine.layout(graph)
+        val trueEntryBounds = result.nodeBounds.getValue(trueEntry.id)
+        val trueActionBounds = result.nodeBounds.getValue(trueAction.id)
+        val falseEntryBounds = result.nodeBounds.getValue(falseEntry.id)
+        val falseActionBounds = result.nodeBounds.getValue(falseAction.id)
+        val joinBounds = result.nodeBounds.getValue(join.id)
+
+        assertEquals(trueEntryBounds.left, trueActionBounds.left, 0.01)
+        assertEquals(falseEntryBounds.left, falseActionBounds.left, 0.01)
+        assertTrue(trueActionBounds.top > trueEntryBounds.top)
+        assertTrue(falseActionBounds.top > falseEntryBounds.top)
+        assertTrue(joinBounds.top > maxOf(trueActionBounds.bottom, falseActionBounds.bottom))
+    }
+
     @Test public fun `variable bulk facet anchors globals beside main flow start`() {
         val start = FlowGraphNode(FlowNodeId("start"), FlowSemanticKind(FlowNodeKind.ENTRY), "start")
         val setLow = FlowGraphNode(FlowNodeId("setLow"), FlowSemanticKind(FlowNodeKind.ASSIGNMENT), "set low")

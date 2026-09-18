@@ -595,7 +595,7 @@ public class FlowchartUiConfigTest {
         assertEquals(target.id, hits[1].ref.nodeId)
         assertEquals("previous", hits[1].ref.portName)
         assertTrue(hits[1].ref.inputSide)
-        assertTrue(hits[0].bounds.contains(Offset(60f, 78f)))
+        assertTrue(hits[0].bounds.contains(Offset(60f, 80f)))
         assertTrue(hits[1].bounds.contains(Offset(230f, 18f)))
     }
 

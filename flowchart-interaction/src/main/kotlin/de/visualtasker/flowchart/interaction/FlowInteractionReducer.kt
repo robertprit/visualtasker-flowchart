@@ -11,6 +11,7 @@ public object FlowInteractionReducer {
         is FlowInteractionAction.SelectEdge -> result(state.copy(selectedNodeIds = emptySet(), selectedEdgeIds = setOf(action.edgeId)), view)
         FlowInteractionAction.ClearSelection -> result(state.copy(selectedNodeIds = emptySet(), selectedEdgeIds = emptySet()), view)
         is FlowInteractionAction.SetMovementMode -> result(state.copy(movementMode = action.mode), view)
+        is FlowInteractionAction.SetFacetHandlesVisible -> result(state.copy(facetHandlesVisible = action.visible), view)
         is FlowInteractionAction.BeginNodeDrag -> beginDrag(state, action, graph, view)
         is FlowInteractionAction.BeginNodeGroupDrag -> beginGroupDrag(state, action, view)
         is FlowInteractionAction.UpdateNodeDrag -> updateDrag(state, action, view)

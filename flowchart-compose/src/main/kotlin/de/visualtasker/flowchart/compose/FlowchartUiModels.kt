@@ -94,6 +94,7 @@ public data class FlowchartUiConfig(
     public val dataFlowEdgesEnabled: Boolean = true,
     public val controlsEnabled: Boolean = true,
     public val minimapEnabled: Boolean = false,
+    public val facetHandlesVisible: Boolean = true,
     public val soundEffectsEnabled: Boolean = false,
     public val hapticFeedbackEnabled: Boolean = false,
     public val layoutOrientation: FlowLayoutOrientation = FlowLayoutOrientation.TOP_TO_BOTTOM,

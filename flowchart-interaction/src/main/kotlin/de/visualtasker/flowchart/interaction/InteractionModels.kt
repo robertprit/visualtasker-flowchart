@@ -18,6 +18,7 @@ public data class FlowInteractionState(
     public val hoveredEdgeId: FlowEdgeId? = null,
     public val activeTool: FlowActiveTool = FlowActiveTool.SELECT,
     public val movementMode: FlowMovementMode = FlowMovementMode.NEXT_FOLLOW_FIRST,
+    public val facetHandlesVisible: Boolean = true,
     public val dragState: FlowNodeDragState? = null,
     public val panState: FlowViewportPanState? = null,
     public val marqueeState: FlowMarqueeState? = null,
@@ -57,6 +58,7 @@ public sealed interface FlowInteractionAction {
     public data object UndoViewChange : FlowInteractionAction
     public data object RedoViewChange : FlowInteractionAction
     public data class SetMovementMode(public val mode: FlowMovementMode) : FlowInteractionAction
+    public data class SetFacetHandlesVisible(public val visible: Boolean) : FlowInteractionAction
 }
 
 public data class FlowInteractionResult(public val state: FlowInteractionState, public val view: FlowViewDocument, public val viewChanged: Boolean)
