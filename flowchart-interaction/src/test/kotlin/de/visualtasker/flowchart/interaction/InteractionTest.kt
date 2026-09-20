@@ -185,6 +185,22 @@ public class InteractionTest {
         controller.close()
     }
 
+    @Test public fun `auto layout preserves selection and is reproducible`() {
+        val controller = FlowchartController(FlowSurfaceId("s"))
+        controller.attachGraph(graph, view)
+        controller.dispatch(FlowInteractionAction.SelectNode(nodes[1].id))
+
+        val first = controller.replaceLayout()
+        val selectionAfterFirst = controller.snapshot().interaction.selectedNodeIds
+        val second = controller.replaceLayout()
+
+        assertEquals(setOf(nodes[1].id), selectionAfterFirst)
+        assertEquals(selectionAfterFirst, controller.snapshot().interaction.selectedNodeIds)
+        assertEquals(first?.nodeViews, second?.nodeViews)
+        assertEquals(first?.edgeViews, second?.edgeViews)
+        controller.close()
+    }
+
     @Test public fun `projection layout preserves hidden node geometry`() {
         val hidden = FlowGraphNode(FlowNodeId("hidden"), FlowSemanticKind(FlowNodeKind.INPUT), "hidden")
         val fullGraph = graph.copy(nodes = graph.nodes + hidden)

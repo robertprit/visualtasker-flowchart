@@ -20,6 +20,36 @@ public class FlowLayoutEngineTest {
         assertTrue(first.isValid)
     }
 
+    @Test public fun `nested branches loops and larger stacks remain deterministic`() {
+        val nodes = listOf("start", "init", "outer", "decision", "then-a", "inner", "inner-a", "else-a", "join", "after", "stop")
+        val graph = graph(
+            nodes,
+            listOf(
+                "start" to "init",
+                "init" to "outer",
+                "outer" to "decision",
+                "decision" to "then-a",
+                "decision" to "else-a",
+                "then-a" to "inner",
+                "inner" to "inner-a",
+                "inner-a" to "inner",
+                "inner" to "join",
+                "else-a" to "join",
+                "join" to "outer",
+                "outer" to "after",
+                "after" to "stop",
+            ),
+        )
+
+        val first = FlowLayoutEngine.layout(graph, config = FlowLayoutConfig(deterministicSeed = 73))
+        val second = FlowLayoutEngine.layout(graph, config = FlowLayoutConfig(deterministicSeed = 73))
+
+        assertTrue(first.isValid)
+        assertEquals(first.nodeBounds, second.nodeBounds)
+        assertEquals(first.routes, second.routes)
+        first.assertNoNodeOverlaps(gap = 1.0)
+    }
+
     @Test public fun `cycle is classified and loop back route remains visible`() {
         val graph = graph(listOf("a", "b"), listOf("a" to "b", "b" to "a"))
         val result = FlowLayoutEngine.layout(graph)
